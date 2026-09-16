@@ -208,14 +208,15 @@
 										{{ item.item_name }}
 									</div>
 									<div class="text-xs text-gray-500">{{ item.item_code }}</div>
-									<div
-										v-if="settingsStore.displayItemSku && item.custom_sku"
-										class="text-xs text-gray-400 truncate"
-										:title="item.custom_sku"
-									>
-										{{ __("SKU:") }} {{ item.custom_sku }}
-									</div>
 								</div>
+							</div>
+							<!-- SKU Row -->
+							<div
+								v-if="showSkuColumn"
+								class="text-center text-xs text-gray-600 mb-2 pt-2 border-t border-gray-100"
+							>
+								<span class="text-gray-500">{{ __("SKU") }}</span>
+								<span class="ms-2 font-medium">{{ item.custom_sku || "-" }}</span>
 							</div>
 							<!-- Details Grid -->
 							<div
@@ -260,6 +261,12 @@
 										{{ __("Item") }}
 									</th>
 									<th
+										v-if="showSkuColumn"
+										class="px-4 py-3 text-center text-xs font-semibold text-gray-600 uppercase tracking-wider"
+									>
+										{{ __("SKU") }}
+									</th>
+									<th
 										class="px-4 py-3 text-center text-xs font-semibold text-gray-600 uppercase tracking-wider"
 									>
 										{{ __("Qty") }}
@@ -294,13 +301,13 @@
 										<div class="text-xs text-gray-500">
 											{{ item.item_code }}
 										</div>
-										<div
-											v-if="settingsStore.displayItemSku && item.custom_sku"
-											class="text-xs text-gray-400"
-											:title="item.custom_sku"
-										>
-											{{ __("SKU:") }} {{ item.custom_sku }}
-										</div>
+									</td>
+									<td
+										v-if="showSkuColumn"
+										class="px-4 py-3 text-center text-sm text-gray-600"
+										:title="item.custom_sku"
+									>
+										{{ item.custom_sku || "-" }}
 									</td>
 									<td class="px-4 py-3 text-center text-sm text-gray-900">
 										{{ item.quantity }}
@@ -530,6 +537,13 @@ const emit = defineEmits(["update:modelValue", "print-invoice"]);
 const show = ref(props.modelValue);
 const loading = ref(false);
 const invoiceData = ref(null);
+
+// Computed: Show the SKU column only when the setting is on and the invoice
+// actually carries SKUs, so the column never renders as a row of dashes.
+const showSkuColumn = computed(() => {
+	if (!settingsStore.displayItemSku) return false;
+	return Boolean(invoiceData.value?.items?.some((item) => item.custom_sku));
+});
 
 // Computed: Check if this is a credit sale (Pay on Account - no payments, full outstanding)
 const isCreditSale = computed(() => {
