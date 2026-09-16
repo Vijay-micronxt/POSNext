@@ -208,6 +208,13 @@
 										{{ item.item_name }}
 									</div>
 									<div class="text-xs text-gray-500">{{ item.item_code }}</div>
+									<div
+										v-if="settingsStore.displayItemSku && item.custom_sku"
+										class="text-xs text-gray-400 truncate"
+										:title="item.custom_sku"
+									>
+										{{ __("SKU:") }} {{ item.custom_sku }}
+									</div>
 								</div>
 							</div>
 							<!-- Details Grid -->
@@ -286,6 +293,13 @@
 										</div>
 										<div class="text-xs text-gray-500">
 											{{ item.item_code }}
+										</div>
+										<div
+											v-if="settingsStore.displayItemSku && item.custom_sku"
+											class="text-xs text-gray-400"
+											:title="item.custom_sku"
+										>
+											{{ __("SKU:") }} {{ item.custom_sku }}
 										</div>
 									</td>
 									<td class="px-4 py-3 text-center text-sm text-gray-900">
@@ -485,6 +499,7 @@
 
 <script setup>
 import { useFormatters } from "@/composables/useFormatters";
+import { usePOSSettingsStore } from "@/stores/posSettings";
 import { DEFAULT_CURRENCY, formatCurrency as formatCurrencyUtil } from "@/utils/currency";
 import { getInvoiceStatusColor } from "@/utils/invoice";
 import { logger } from "@/utils/logger";
@@ -494,6 +509,7 @@ import { ref, watch, nextTick, computed } from "vue";
 
 const log = logger.create("InvoiceDetailDialog");
 const { formatDate, formatTime } = useFormatters();
+const settingsStore = usePOSSettingsStore();
 
 const props = defineProps({
 	modelValue: Boolean,
