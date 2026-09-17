@@ -25,6 +25,7 @@ FIELD_ALLOW_USER_TO_EDIT_RATE = "allow_user_to_edit_rate"
 FIELD_MAX_DISCOUNT_ALLOWED = "max_discount_allowed"
 FIELD_DISABLE_ROUNDED_TOTAL = "disable_rounded_total"
 FIELD_ALLOW_NEGATIVE_STOCK = "allow_negative_stock"
+ITEM_SKU_FIELD = "custom_sku"
 
 # Doctypes
 DOCTYPE_SALES_INVOICE = "Sales Invoice"
@@ -1598,6 +1599,41 @@ def submit_invoice(invoice=None, data=None):
 # ==========================================
 
 
+def _attach_item_sku(items):
+	"""Stamp the Item's ``custom_sku`` on each invoice item row.
+
+	``custom_sku`` is a site-level custom field (same one the item selector
+	shows), so it is only read when it actually exists on Item. Rows that carry
+	their own value keep it, which covers sites that added the field to the
+	invoice item table as well.
+	"""
+	if not items:
+		return items
+
+	if not frappe.get_meta("Item").has_field(ITEM_SKU_FIELD):
+		return items
+
+	pending = {row.get(FIELD_ITEM_CODE) for row in items if not row.get(ITEM_SKU_FIELD)}
+	pending.discard(None)
+	if not pending:
+		return items
+
+	sku_by_item_code = dict(
+		frappe.get_all(
+			"Item",
+			filters={"name": ("in", list(pending))},
+			fields=["name", ITEM_SKU_FIELD],
+			as_list=True,
+		)
+	)
+
+	for row in items:
+		if not row.get(ITEM_SKU_FIELD):
+			row[ITEM_SKU_FIELD] = sku_by_item_code.get(row.get(FIELD_ITEM_CODE))
+
+	return items
+
+
 @frappe.whitelist()
 def get_invoice(invoice_name):
 	"""
@@ -1622,7 +1658,10 @@ def get_invoice(invoice_name):
 	# Get invoice document
 	invoice = frappe.get_doc("Sales Invoice", invoice_name)
 
-	return invoice.as_dict()
+	result = invoice.as_dict()
+	_attach_item_sku(result.get("items"))
+
+	return result
 
 
 @frappe.whitelist()
