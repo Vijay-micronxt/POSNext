@@ -1861,6 +1861,30 @@ function rfidScanRequired(item) {
 
 function handleItemSelected(item, autoAdd = false) {
 	if (rfidScanRequired(item)) return;
+	// A scanned serial label is one physical unit: add it directly, no serial dialog.
+	// Scanning the same label again merges into the line and keeps qty unchanged.
+	if (item.scanned_serial_no) {
+		const inCart = cartStore.invoiceItems.some(
+			(line) =>
+				line.item_code === item.item_code &&
+				(line.serial_no || "").split("\n").includes(item.scanned_serial_no)
+		);
+		if (inCart) {
+			showWarning(__("Serial No {0} is already in the cart", [item.scanned_serial_no]));
+			return;
+		}
+		try {
+			cartStore.addItem(
+				{ ...item, serial_no: item.scanned_serial_no, quantity: 1 },
+				1,
+				false,
+				shiftStore.currentProfile
+			);
+		} catch (error) {
+			uiStore.showError(__("Cannot add item"), error.message, __("Item: {0}", [item.item_code]));
+		}
+		return;
+	}
 	// Auto-add mode
 	if (autoAdd) {
 		try {
