@@ -494,6 +494,7 @@ def search_by_barcode(barcode, pos_profile):
 			"Item Barcode", {"barcode": effective_barcode}, ["parent", "uom"], as_dict=True
 		)
 
+		scanned_serial = None
 		if barcode_data:
 			item_code = barcode_data.parent
 			barcode_uom = barcode_data.uom
@@ -502,11 +503,17 @@ def search_by_barcode(barcode, pos_profile):
 			item_code = frappe.db.get_value("Item", {"name": effective_barcode})
 			barcode_uom = None
 
-		if not item_code:
-			frappe.throw(_("Item with barcode {0} not found").format(barcode))
-
 		# Get POS Profile details
 		pos_profile_doc = frappe.get_cached_doc("POS Profile", pos_profile)
+
+		if not item_code:
+			# A printed serial label identifies one physical unit
+			scanned_serial = _serial_for_sale(effective_barcode, pos_profile_doc.warehouse)
+			if scanned_serial:
+				item_code = scanned_serial.item_code
+
+		if not item_code:
+			frappe.throw(_("Item with barcode {0} not found").format(barcode))
 
 		# Validate POS Profile has required fields
 		if not pos_profile_doc.warehouse:
@@ -546,6 +553,14 @@ def search_by_barcode(barcode, pos_profile):
 
 		# Ensure warehouse is set on the response (needed for cart/invoice)
 		item_details["warehouse"] = pos_profile_doc.warehouse
+		# Alternative UOMs only, like the item list endpoints. With the stock UOM left in,
+		# every scan of a single-UOM item opened the UOM dialog and its qty box took the
+		# next scan as a quantity.
+		item_details["item_uoms"] = [
+			u for u in item_details.get("item_uoms") or [] if u.get("uom") != item_details.get("stock_uom")
+		]
+		if scanned_serial:
+			item_details["scanned_serial_no"] = scanned_serial.name
 
 		# Build uom_prices map (same pattern as get_items)
 		uom_prices = {}
@@ -583,6 +598,24 @@ def search_by_barcode(barcode, pos_profile):
 	except Exception as e:
 		frappe.log_error(frappe.get_traceback(), "Search by Barcode Error")
 		frappe.throw(_("Error searching by barcode: {0}").format(str(e)))
+
+
+def _serial_for_sale(code, warehouse):
+	"""Serial No that can be sold from this counter, or None when the code is not a serial."""
+	serial = frappe.db.get_value(
+		"Serial No", code, ["name", "item_code", "status", "warehouse"], as_dict=True
+	)
+	if not serial:
+		return None
+	if serial.status != "Active":
+		frappe.throw(_("Serial No {0} is {1} and cannot be sold").format(serial.name, _(serial.status)))
+	if serial.warehouse != warehouse:
+		frappe.throw(
+			_("Serial No {0} is in warehouse {1}, not in this counter's warehouse {2}").format(
+				serial.name, serial.warehouse, warehouse
+			)
+		)
+	return serial
 
 
 @frappe.whitelist()
