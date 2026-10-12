@@ -1232,8 +1232,11 @@ let bodyStyleSnapshot = null;
 // RFID counter mode follows the active POS Profile (no-op on non-RFID sites).
 watch(
 	() => shiftStore.profileName,
-	(name) => {
-		if (name) rfidStore.load(name);
+	async (name) => {
+		if (!name) return;
+		await rfidStore.load(name);
+		// Switching from an RFID counter to a plain one must not carry its basket.
+		if (!rfidStore.enabled) cartStore.invoiceExtras = {};
 	},
 	{ immediate: true }
 );
