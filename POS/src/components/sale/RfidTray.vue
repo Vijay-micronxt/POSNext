@@ -3,7 +3,8 @@
 
   Shown above the cart only when the counter runs in RFID mode (see stores/posRfid.js).
   The tray reader (or a keyboard-wedge bridge) types EPCs into the input; Enter reads them.
-  Complete units go straight into the cart with their serial number. Incomplete sets stay
+  Complete units go straight into the cart (with their serial number when the item has
+  one; otherwise as one more unit of the item). Incomplete sets stay
   here with their missing pieces and block payment until fixed or removed.
 -->
 <template>
@@ -36,13 +37,13 @@
 			{{ __("Tag unreadable - scanning printed labels") }}
 		</label>
 
-		<div v-for="line in rfid.incomplete" :key="line.serial_no" class="mt-2 rounded-lg border border-amber-200 bg-amber-50 p-2">
+		<div v-for="line in rfid.incomplete" :key="rfid.keyOf(line)" class="mt-2 rounded-lg border border-amber-200 bg-amber-50 p-2">
 			<div class="flex items-center justify-between gap-2">
 				<div class="min-w-0">
 					<div class="truncate text-sm font-medium text-gray-900">{{ line.item_name }}</div>
 					<div class="text-xs text-amber-700">{{ __("Set incomplete - read the missing pieces") }}</div>
 				</div>
-				<button class="shrink-0 text-xs font-medium text-gray-500 hover:text-red-600" @click="rfid.removeUnit(line.serial_no)">
+				<button class="shrink-0 text-xs font-medium text-gray-500 hover:text-red-600" @click="rfid.removeUnit(rfid.keyOf(line))">
 					{{ __("Remove") }}
 				</button>
 			</div>
@@ -134,23 +135,16 @@ function schedulePush() {
 	return pushChain;
 }
 
-/** Complete units on the tray -> cart lines with their serial numbers. */
+/** Complete units on the tray -> cart lines (with their serial number when the item has one). */
 async function pushCompleteUnits() {
 	for (const line of rfid.pendingForCart()) {
 		const details = await itemDetails(line.item_code);
+		const unit = line.serial_no
+			? { ...details, serial_no: line.serial_no, has_serial_no: 1, quantity: 1 }
+			: { ...details, quantity: 1 };
 		try {
-			cartStore.addItem(
-				{
-					...details,
-					serial_no: line.serial_no,
-					has_serial_no: 1,
-					quantity: 1,
-				},
-				1,
-				false,
-				shiftStore.currentProfile,
-			);
-			rfid.markInCart(line.serial_no);
+			cartStore.addItem(unit, 1, false, shiftStore.currentProfile);
+			rfid.markInCart(rfid.keyOf(line));
 		} catch (error) {
 			showError(error.message);
 		}
@@ -168,8 +162,28 @@ const cartSerials = computed(() => {
 });
 watch(cartSerials, (now) => {
 	// Only units this tray put into the cart; incomplete sets live in the panel, not the cart.
-	for (const serial of [...rfid.inCart]) {
-		if (!now.has(serial)) rfid.removeUnit(serial).catch(() => {});
+	for (const line of rfid.lines) {
+		if (line.serial_no && rfid.inCart.has(line.serial_no) && !now.has(line.serial_no))
+			rfid.removeUnit(line.serial_no).catch(() => {});
+	}
+});
+
+// Items without serial numbers: the cart quantity going down drops that many tags from the tray.
+const cartQty = computed(() => {
+	const qty = {};
+	for (const item of cartStore.invoiceItems) {
+		if (!(item.serial_no || "").trim())
+			qty[item.item_code] = (qty[item.item_code] || 0) + Number(item.quantity || item.qty || 0);
+	}
+	return qty;
+});
+watch(cartQty, (now) => {
+	const items = new Set(rfid.lines.filter((l) => !l.serial_no).map((l) => l.item_code));
+	for (const itemCode of items) {
+		const tags = rfid.itemTagsInCart(itemCode);
+		const extra = tags.length - Math.floor(now[itemCode] || 0);
+		for (const key of tags.slice(tags.length - Math.max(extra, 0)))
+			rfid.removeUnit(key).catch(() => {});
 	}
 });
 

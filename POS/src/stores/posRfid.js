@@ -4,7 +4,8 @@
  * Active only when the rfid_retail app is installed and the POS Profile is an
  * RFID counter there. Tray reads go to an RFID basket on the server; every
  * complete sellable unit (a single garment, or a set with all its pieces read)
- * is added to the normal POS cart with its serial number. Incomplete sets stay
+ * is added to the normal POS cart - with its serial number, or as one more
+ * unit of the item when the item has no serial numbers. Incomplete sets stay
  * in the tray panel and block payment. The server re-checks everything on submit.
  */
 
@@ -82,26 +83,36 @@ export const usePosRfidStore = defineStore("posRfid", () => {
 		}
 	}
 
-	async function removeUnit(serialNo) {
+	/** key = the unit's serial, or the tag itself for an item without serial numbers. */
+	async function removeUnit(key) {
 		if (!basket.value) return;
 		applyView(
 			await call("rfid_retail.api.pos.remove_unit", {
 				basket: basket.value,
-				serial_no: serialNo,
+				key,
 			}),
 		);
-		inCart.value.delete(serialNo);
+		inCart.value.delete(key);
 	}
 
-	/** Lines whose serial is complete on the tray but not yet in the cart. */
+	const keyOf = (line) => line.key || line.serial_no;
+
+	/** Lines complete on the tray but not yet in the cart. */
 	function pendingForCart() {
 		return lines.value.filter(
-			(l) => l.complete && !inCart.value.has(l.serial_no),
+			(l) => l.complete && !inCart.value.has(keyOf(l)),
 		);
 	}
 
-	function markInCart(serialNo) {
-		inCart.value.add(serialNo);
+	/** Tags of non-serial units already pushed into the cart, per item. */
+	function itemTagsInCart(itemCode) {
+		return lines.value
+			.filter((l) => !l.serial_no && l.item_code === itemCode && inCart.value.has(keyOf(l)))
+			.map(keyOf);
+	}
+
+	function markInCart(key) {
+		inCart.value.add(key);
 	}
 
 	/** Invoice header fields that tie the sale to this basket. */
@@ -148,6 +159,8 @@ export const usePosRfidStore = defineStore("posRfid", () => {
 		scan,
 		removeUnit,
 		pendingForCart,
+		itemTagsInCart,
+		keyOf,
 		markInCart,
 		invoiceExtras,
 		reset,
