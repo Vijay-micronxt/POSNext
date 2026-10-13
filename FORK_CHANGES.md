@@ -6,7 +6,7 @@ upstream behaviour, so a site that does not use a feature sees no difference.
 
 ## 1. RFID counter mode (optional)
 
-Works together with the [rfid_retail](https://github.com/tushar-git26/rfid_retail) app. For
+Works together with the [rfid_retail](https://github.com/Vijay-micronxt/RFID_Operations) app. For
 garment stores where every piece carries an RFID tag and a set (suit = jacket + trouser) must
 only be billed when every piece is at the counter.
 
@@ -94,9 +94,9 @@ sequenceDiagram
 ## Install
 
 ```bash
-bench get-app https://github.com/tushar-git26/POSNext --branch feat/rfid-mode
+bench get-app https://github.com/Vijay-micronxt/POSNext --branch feat/rfid-mode
 bench --site <site> install-app pos_next
 # optional, for RFID counters
-bench get-app https://github.com/tushar-git26/rfid_retail --branch main
+bench get-app https://github.com/Vijay-micronxt/RFID_Operations --branch main
 bench --site <site> install-app rfid_retail
 ```
