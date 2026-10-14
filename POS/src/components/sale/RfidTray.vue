@@ -19,13 +19,13 @@
 				type="text"
 				class="h-9 min-w-0 flex-1 rounded-lg border border-gray-300 px-3 text-sm focus:border-indigo-500 focus:outline-none"
 				:placeholder="offline ? __('RFID needs a connection') : __('Place garments on the tray or scan a tag')"
-				:disabled="offline || rfid.busy"
+				:disabled="offline"
 				@keydown.enter.prevent="readTray"
 				@paste="onPaste"
 			/>
 			<button
 				class="h-9 rounded-lg bg-indigo-600 px-3 text-sm font-medium text-white disabled:opacity-50"
-				:disabled="offline || rfid.busy || !reads.trim()"
+				:disabled="offline || !reads.trim()"
 				@click="readTray"
 			>
 				{{ rfid.busy ? __("Reading…") : __("Read") }}
@@ -107,15 +107,33 @@ function onPaste(event) {
 	}
 }
 
+// The reader keeps typing while a read is on its way to the server, so the input stays
+// enabled (a disabled input drops the first characters of the next tag) and reads queue up.
+const queue = [];
+let draining = false;
+
 async function readTray() {
 	const codes = splitCodes(reads.value);
 	if (!codes.length) return;
 	reads.value = "";
+	queue.push({ codes, source: labelMode.value ? "Barcode" : "RFID" });
+	if (draining) return;
+	draining = true;
 	try {
-		await rfid.scan(codes, labelMode.value ? "Barcode" : "RFID");
-		await schedulePush();
-	} catch (error) {
-		showError(error?.messages?.[0] || error?.message || __("RFID read failed"));
+		while (queue.length) {
+			// Everything queued with the same source goes to the server in one call.
+			const { source } = queue[0];
+			const batch = [];
+			while (queue.length && queue[0].source === source) batch.push(...queue.shift().codes);
+			try {
+				await rfid.scan(batch, source);
+				await schedulePush();
+			} catch (error) {
+				showError(error?.messages?.[0] || error?.message || __("RFID read failed"));
+			}
+		}
+	} finally {
+		draining = false;
 	}
 	await nextTick();
 	inputRef.value?.focus();
