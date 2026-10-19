@@ -83,6 +83,8 @@ def create_customer(
 	pos_profile=None,
 	custom_governorate=None,
 	custom_district=None,
+	custom_date_of_birth=None,
+	custom_anniversary_date=None,
 ):
 	"""
 	Create a new customer from POS.
@@ -97,6 +99,8 @@ def create_customer(
 	    pos_profile (str): POS Profile (optional, preferred for context-aware loyalty assignment)
 	    custom_governorate (str): Governorate (optional)
 	    custom_district (str): District (optional, must belong to the governorate)
+	    custom_date_of_birth (str): Date of birth, yyyy-mm-dd (optional)
+	    custom_anniversary_date (str): Anniversary date, yyyy-mm-dd (optional)
 
 	Returns:
 	    dict: Created customer document
@@ -142,6 +146,8 @@ def create_customer(
 			"loyalty_program": loyalty_program,
 			"custom_governorate": custom_governorate or None,
 			"custom_district": custom_district or None,
+			"custom_date_of_birth": custom_date_of_birth or None,
+			"custom_anniversary_date": custom_anniversary_date or None,
 		}
 	)
 
