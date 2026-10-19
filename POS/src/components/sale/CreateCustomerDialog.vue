@@ -7,7 +7,9 @@
 		}"
 	>
 		<template #body-content>
-			<div class="flex flex-col gap-6">
+			<!-- reka-ui's DialogOverlay wraps the content and prevents pointerdown, which stops
+			     a click from focusing the inputs; keep pointerdown inside the form. -->
+			<div class="flex flex-col gap-6" @pointerdown.stop>
 				<!-- Customer Name (Required) -->
 				<div>
 					<label class="block text-start text-sm font-medium text-gray-700 mb-2">
