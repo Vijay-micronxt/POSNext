@@ -131,6 +131,32 @@
 					/>
 				</div>
 
+				<!-- Date of Birth + Anniversary (optional) -->
+				<div class="grid grid-cols-2 gap-4">
+					<div>
+						<label class="block text-start text-sm font-medium text-gray-700 mb-2">
+							{{ __("Date of Birth") }}
+						</label>
+						<input
+							v-model="customerData.custom_date_of_birth"
+							type="date"
+							:max="today"
+							class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+						/>
+					</div>
+					<div>
+						<label class="block text-start text-sm font-medium text-gray-700 mb-2">
+							{{ __("Anniversary Date") }}
+						</label>
+						<input
+							v-model="customerData.custom_anniversary_date"
+							type="date"
+							:max="today"
+							class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+						/>
+					</div>
+				</div>
+
 				<!-- Customer Group -->
 				<div>
 					<label class="block text-start text-sm font-medium text-gray-700 mb-2">
@@ -335,7 +361,14 @@ const customerData = ref({
 	territory: "",
 	custom_governorate: "",
 	custom_district: "",
+	custom_date_of_birth: "",
+	custom_anniversary_date: "",
 });
+
+// yyyy-mm-dd in local time, upper bound for the date pickers
+const today = new Date(Date.now() - new Date().getTimezoneOffset() * 60000)
+	.toISOString()
+	.slice(0, 10);
 
 // =============================================================================
 // Computed
@@ -448,6 +481,8 @@ const createCustomerResource = createResource({
 		territory: customerData.value.territory || "",
 		custom_governorate: customerData.value.custom_governorate || "",
 		custom_district: customerData.value.custom_district || "",
+		custom_date_of_birth: customerData.value.custom_date_of_birth || "",
+		custom_anniversary_date: customerData.value.custom_anniversary_date || "",
 		pos_profile: props.posProfile,
 	}),
 	onSuccess: (data) => {
@@ -474,6 +509,8 @@ const updateCustomerResource = createResource({
 			email_id: customerData.value.email_id || "",
 			custom_governorate: customerData.value.custom_governorate || "",
 			custom_district: customerData.value.custom_district || "",
+			custom_date_of_birth: customerData.value.custom_date_of_birth || null,
+			custom_anniversary_date: customerData.value.custom_anniversary_date || null,
 		},
 	}),
 	onSuccess: (data) => {
@@ -545,12 +582,19 @@ const customerLocationResource = createResource({
 	makeParams: () => ({
 		doctype: "Customer",
 		filters: { name: props.customer?.name },
-		fieldname: ["custom_governorate", "custom_district"],
+		fieldname: [
+			"custom_governorate",
+			"custom_district",
+			"custom_date_of_birth",
+			"custom_anniversary_date",
+		],
 	}),
 	auto: false,
 	onSuccess: (data) => {
 		customerData.value.custom_governorate = data?.custom_governorate || "";
 		customerData.value.custom_district = data?.custom_district || "";
+		customerData.value.custom_date_of_birth = data?.custom_date_of_birth || "";
+		customerData.value.custom_anniversary_date = data?.custom_anniversary_date || "";
 	},
 	onError: (err) => log.error("Error loading customer location", err),
 });
@@ -668,6 +712,8 @@ const resetForm = () => {
 		),
 		custom_governorate: "",
 		custom_district: "",
+		custom_date_of_birth: "",
+		custom_anniversary_date: "",
 	});
 	districts.value = [];
 	selectedCountryCode.value = "";
@@ -700,6 +746,8 @@ watch(
 
 			customerData.value.custom_governorate = customer.custom_governorate || "";
 			customerData.value.custom_district = customer.custom_district || "";
+			customerData.value.custom_date_of_birth = customer.custom_date_of_birth || "";
+			customerData.value.custom_anniversary_date = customer.custom_anniversary_date || "";
 			// Handle mobile_no with country code
 			if (customer.mobile_no) {
 				customerData.value.mobile_no = customer.mobile_no;
