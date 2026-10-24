@@ -1894,42 +1894,72 @@ function rfidScanRequired(item) {
 	return false;
 }
 
-// RFID counter: an item picked by hand while some of its pieces in stock carry an RFID tag
-// (and some do not) - ask before selling it without reading the tag. Asked once per item per bill.
-// Every piece tagged: picking by hand is refused (the server refuses such a bill too).
+// RFID counter: an item picked by hand while some of its pieces in stock carry an RFID tag.
+// Pieces picked by hand can only be the untagged ones, so their count in the cart may never pass
+// the untagged stock; the first one asks the cashier to confirm the piece really has no tag.
+// The server refuses such a bill too.
 const rfidManualPrompt = ref(null);
-const rfidManualOk = new Set();
-watch(
-	() => cartStore.invoiceItems.length,
-	(n) => n === 0 && rfidManualOk.clear()
-);
 
-async function rfidManualAddAllowed(item) {
-	if (!rfidStore.enabled || !item?.item_code || rfidManualOk.has(item.item_code)) return true;
-	let check = null;
+/** Units of an item in the cart that were not read on the tray. */
+function rfidHandPickedQty(itemCode) {
+	const inCart = cartStore.invoiceItems
+		.filter((line) => line.item_code === itemCode)
+		.reduce((sum, line) => sum + Math.abs((Number(line.quantity) || 0) * (Number(line.conversion_factor) || 1)), 0);
+	const fromTray = rfidStore.lines.filter(
+		(l) => l.item_code === itemCode && !l.serial_no && rfidStore.inCart.has(rfidStore.keyOf(l))
+	).length;
+	return Math.max(inCart - fromTray, 0);
+}
+
+async function rfidCheck(itemCode) {
 	try {
-		check = await call("rfid_retail.api.pos.manual_add_check", {
-			item_code: item.item_code,
+		return await call("rfid_retail.api.pos.manual_add_check", {
+			item_code: itemCode,
 			pos_profile: shiftStore.profileName,
 		});
 	} catch (error) {
-		return true; // never block a sale because the check failed; the server still checks on submit
+		return null; // never block a sale because the check failed; the server still checks on submit
 	}
-	if (check?.block) {
-		showWarning(
-			__("Every piece of {0} in stock has an RFID tag. Put it on the RFID tray instead of picking it by hand.", [
-				item.item_name || item.item_code,
-			])
-		);
+}
+
+function rfidTooManyMessage(name, check) {
+	return check.untagged
+		? __("Only {0} piece(s) of {1} without an RFID tag are in stock and they are already in the cart. Put the other pieces on the RFID tray.", [check.untagged, name])
+		: __("Every piece of {0} in stock has an RFID tag. Put it on the RFID tray instead of picking it by hand.", [name]);
+}
+
+async function rfidManualAddAllowed(item) {
+	if (!rfidStore.enabled || !item?.item_code) return true;
+	const check = await rfidCheck(item.item_code);
+	if (!check?.tagged) return true;
+	const name = item.item_name || item.item_code;
+	const handPicked = rfidHandPickedQty(item.item_code);
+	if (handPicked + 1 > check.untagged) {
+		showWarning(rfidTooManyMessage(name, check));
 		return false;
 	}
-	if (!check?.warn) return true;
+	if (handPicked > 0) return true; // already confirmed for this bill
 	const ok = await new Promise((resolve) => {
 		rfidManualPrompt.value = { item, ...check, resolve };
 	});
 	rfidManualPrompt.value = null;
-	if (ok) rfidManualOk.add(item.item_code);
 	return ok;
+}
+
+/** Before payment: quantities typed or + pressed in the cart are checked here. */
+async function rfidHandPickedProblem() {
+	if (!rfidStore.enabled) return null;
+	const codes = [...new Set(cartStore.invoiceItems.map((line) => line.item_code))];
+	for (const code of codes) {
+		const handPicked = rfidHandPickedQty(code);
+		if (!handPicked) continue;
+		const check = await rfidCheck(code);
+		if (check?.tagged && handPicked > check.untagged) {
+			const line = cartStore.invoiceItems.find((l) => l.item_code === code);
+			return rfidTooManyMessage(line?.item_name || code, check);
+		}
+	}
+	return null;
 }
 
 function answerRfidManualPrompt(ok) {
@@ -2091,7 +2121,7 @@ function handleEditCustomer(customer) {
 	uiStore.showCreateCustomerDialog = true;
 }
 
-function handleProceedToPayment() {
+async function handleProceedToPayment() {
 	if (cartStore.isEmpty) {
 		showWarning(__("Please add items to cart before proceeding to payment"));
 		return;
@@ -2102,6 +2132,11 @@ function handleProceedToPayment() {
 	}
 	if (rfidStore.blocked) {
 		showWarning(__("A set on the tray is incomplete. Read the missing pieces or remove it."));
+		return;
+	}
+	const handPickedProblem = await rfidHandPickedProblem();
+	if (handPickedProblem) {
+		showWarning(handPickedProblem);
 		return;
 	}
 
