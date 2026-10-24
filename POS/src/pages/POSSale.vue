@@ -1929,7 +1929,7 @@ function rfidTooManyMessage(name, check) {
 }
 
 async function rfidManualAddAllowed(item) {
-	if (!rfidStore.enabled || !item?.item_code) return true;
+	if (!rfidStore.handPickCheck || !item?.item_code) return true;
 	const check = await rfidCheck(item.item_code);
 	if (!check?.tagged) return true;
 	const name = item.item_name || item.item_code;
@@ -1948,7 +1948,7 @@ async function rfidManualAddAllowed(item) {
 
 /** Before payment: quantities typed or + pressed in the cart are checked here. */
 async function rfidHandPickedProblem() {
-	if (!rfidStore.enabled) return null;
+	if (!rfidStore.handPickCheck) return null;
 	const codes = [...new Set(cartStore.invoiceItems.map((line) => line.item_code))];
 	for (const code of codes) {
 		const handPicked = rfidHandPickedQty(code);
