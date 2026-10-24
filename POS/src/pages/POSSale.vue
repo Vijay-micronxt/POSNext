@@ -1896,6 +1896,7 @@ function rfidScanRequired(item) {
 
 // RFID counter: an item picked by hand while some of its pieces in stock carry an RFID tag
 // (and some do not) - ask before selling it without reading the tag. Asked once per item per bill.
+// Every piece tagged: picking by hand is refused (the server refuses such a bill too).
 const rfidManualPrompt = ref(null);
 const rfidManualOk = new Set();
 watch(
@@ -1913,6 +1914,14 @@ async function rfidManualAddAllowed(item) {
 		});
 	} catch (error) {
 		return true; // never block a sale because the check failed; the server still checks on submit
+	}
+	if (check?.block) {
+		showWarning(
+			__("Every piece of {0} in stock has an RFID tag. Put it on the RFID tray instead of picking it by hand.", [
+				item.item_name || item.item_code,
+			])
+		);
+		return false;
 	}
 	if (!check?.warn) return true;
 	const ok = await new Promise((resolve) => {
