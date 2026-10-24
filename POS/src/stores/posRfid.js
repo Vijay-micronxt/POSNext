@@ -42,6 +42,10 @@ export const usePosRfidStore = defineStore("posRfid", () => {
 	const requireScan = computed(
 		() => enabled.value && !!config.value.require_scan,
 	);
+	// Hand-picked RFID items checked against untagged stock (RFID Settings switch).
+	const handPickCheck = computed(
+		() => enabled.value && !!config.value.hand_pick_check,
+	);
 
 	function applyView(view) {
 		basket.value = view.basket;
@@ -182,6 +186,7 @@ export const usePosRfidStore = defineStore("posRfid", () => {
 		incomplete,
 		blocked,
 		requireScan,
+		handPickCheck,
 		load,
 		scan,
 		removeUnit,

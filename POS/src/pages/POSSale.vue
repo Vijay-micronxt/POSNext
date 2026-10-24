@@ -684,6 +684,42 @@
 				@print-invoice="handlePrintInvoice"
 			/>
 
+			<!-- RFID: item picked by hand while tagged pieces are in stock -->
+			<Dialog
+				:model-value="!!rfidManualPrompt"
+				:options="{ title: __('Sell without reading the RFID tag?'), size: 'sm' }"
+				@update:model-value="(open) => !open && answerRfidManualPrompt(false)"
+			>
+				<template #body-content>
+					<div v-if="rfidManualPrompt" class="py-3 space-y-2 text-sm text-gray-700">
+						<p>
+							{{
+								__("{0} has {1} piece(s) with an RFID tag in stock (and {2} without).", [
+									rfidManualPrompt.item.item_name || rfidManualPrompt.item.item_code,
+									rfidManualPrompt.tagged,
+									rfidManualPrompt.untagged,
+								])
+							}}
+						</p>
+						<p class="text-gray-600">
+							{{
+								__("If the customer's piece has a tag, put it on the RFID tray instead. Add by hand only for a piece without a tag.")
+							}}
+						</p>
+					</div>
+				</template>
+				<template #actions>
+					<div class="flex gap-2 w-full">
+						<Button class="flex-1" variant="subtle" @click="answerRfidManualPrompt(false)">
+							{{ __("Scan the tag") }}
+						</Button>
+						<Button class="flex-1" variant="solid" @click="answerRfidManualPrompt(true)">
+							{{ __("Piece has no tag - add") }}
+						</Button>
+					</div>
+				</template>
+			</Dialog>
+
 			<!-- Clear Cart Confirmation Dialog -->
 			<Dialog
 				v-model="uiStore.showClearCartDialog"
@@ -1858,8 +1894,81 @@ function rfidScanRequired(item) {
 	return false;
 }
 
-function handleItemSelected(item, autoAdd = false) {
+// RFID counter: an item picked by hand while some of its pieces in stock carry an RFID tag.
+// Pieces picked by hand can only be the untagged ones, so their count in the cart may never pass
+// the untagged stock; the first one asks the cashier to confirm the piece really has no tag.
+// The server refuses such a bill too.
+const rfidManualPrompt = ref(null);
+
+/** Units of an item in the cart that were not read on the tray. */
+function rfidHandPickedQty(itemCode) {
+	const inCart = cartStore.invoiceItems
+		.filter((line) => line.item_code === itemCode)
+		.reduce((sum, line) => sum + Math.abs((Number(line.quantity) || 0) * (Number(line.conversion_factor) || 1)), 0);
+	const fromTray = rfidStore.lines.filter(
+		(l) => l.item_code === itemCode && !l.serial_no && rfidStore.inCart.has(rfidStore.keyOf(l))
+	).length;
+	return Math.max(inCart - fromTray, 0);
+}
+
+async function rfidCheck(itemCode) {
+	try {
+		return await call("rfid_retail.api.pos.manual_add_check", {
+			item_code: itemCode,
+			pos_profile: shiftStore.profileName,
+		});
+	} catch (error) {
+		return null; // never block a sale because the check failed; the server still checks on submit
+	}
+}
+
+function rfidTooManyMessage(name, check) {
+	return check.untagged
+		? __("Only {0} piece(s) of {1} without an RFID tag are in stock and they are already in the cart. Put the other pieces on the RFID tray.", [check.untagged, name])
+		: __("Every piece of {0} in stock has an RFID tag. Put it on the RFID tray instead of picking it by hand.", [name]);
+}
+
+async function rfidManualAddAllowed(item) {
+	if (!rfidStore.handPickCheck || !item?.item_code) return true;
+	const check = await rfidCheck(item.item_code);
+	if (!check?.tagged) return true;
+	const name = item.item_name || item.item_code;
+	const handPicked = rfidHandPickedQty(item.item_code);
+	if (handPicked + 1 > check.untagged) {
+		showWarning(rfidTooManyMessage(name, check));
+		return false;
+	}
+	if (handPicked > 0) return true; // already confirmed for this bill
+	const ok = await new Promise((resolve) => {
+		rfidManualPrompt.value = { item, ...check, resolve };
+	});
+	rfidManualPrompt.value = null;
+	return ok;
+}
+
+/** Before payment: quantities typed or + pressed in the cart are checked here. */
+async function rfidHandPickedProblem() {
+	if (!rfidStore.handPickCheck) return null;
+	const codes = [...new Set(cartStore.invoiceItems.map((line) => line.item_code))];
+	for (const code of codes) {
+		const handPicked = rfidHandPickedQty(code);
+		if (!handPicked) continue;
+		const check = await rfidCheck(code);
+		if (check?.tagged && handPicked > check.untagged) {
+			const line = cartStore.invoiceItems.find((l) => l.item_code === code);
+			return rfidTooManyMessage(line?.item_name || code, check);
+		}
+	}
+	return null;
+}
+
+function answerRfidManualPrompt(ok) {
+	rfidManualPrompt.value?.resolve(ok);
+}
+
+async function handleItemSelected(item, autoAdd = false) {
 	if (rfidScanRequired(item)) return;
+	if (!item.scanned_serial_no && !(await rfidManualAddAllowed(item))) return;
 	// A scanned serial label is one physical unit: add it directly, no serial dialog.
 	// Scanning the same label again merges into the line and keeps qty unchanged.
 	if (item.scanned_serial_no) {
@@ -2012,7 +2121,7 @@ function handleEditCustomer(customer) {
 	uiStore.showCreateCustomerDialog = true;
 }
 
-function handleProceedToPayment() {
+async function handleProceedToPayment() {
 	if (cartStore.isEmpty) {
 		showWarning(__("Please add items to cart before proceeding to payment"));
 		return;
@@ -2023,6 +2132,11 @@ function handleProceedToPayment() {
 	}
 	if (rfidStore.blocked) {
 		showWarning(__("A set on the tray is incomplete. Read the missing pieces or remove it."));
+		return;
+	}
+	const handPickedProblem = await rfidHandPickedProblem();
+	if (handPickedProblem) {
+		showWarning(handPickedProblem);
 		return;
 	}
 
