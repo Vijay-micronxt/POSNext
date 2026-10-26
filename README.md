@@ -2,6 +2,8 @@
 
 > **Fork note:** this branch adds RFID counter mode (with [rfid_retail](https://github.com/Vijay-micronxt/RFID_Operations)),
 > per-item GST, SKU display and price/print fixes. See [FORK_CHANGES.md](FORK_CHANGES.md).
+>
+> **How to use it at the counter:** [docs/USER_MANUAL.md](docs/USER_MANUAL.md) (setup, shifts, selling, payment, returns, offline, RFID counters, closing).
 
 <div align="center">
 
