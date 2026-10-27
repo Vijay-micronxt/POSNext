@@ -5,6 +5,8 @@ Welcome to the POS Next documentation directory. This folder contains comprehens
 ## 📚 Available Documentation
 
 ### User Guides
+- **[USER_MANUAL.md](USER_MANUAL.md)** - Store user manual: setup, shifts, selling, payment, returns, drafts, offline, RFID counter mode, closing, every POS Setting
+
 - **[LOCALIZATION.md](LOCALIZATION.md)** - Language settings guide
   - Configuring allowed languages
   - Using the language switcher

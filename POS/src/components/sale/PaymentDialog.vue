@@ -8,7 +8,10 @@
 	>
 		<template #body-content>
 			<!-- Two Column Layout - auto-sized on mobile, constrained on desktop -->
+			<!-- reka-ui's DialogOverlay wraps the content and prevents pointerdown, which stops
+			     a click from focusing the sales person and discount inputs; keep it in here. -->
 			<div
+				@pointerdown.stop
 				:class="[
 					'grid grid-cols-1 lg:grid-cols-5 items-stretch',
 					dynamicGap,
