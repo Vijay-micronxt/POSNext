@@ -23,6 +23,8 @@ export const usePosRfidStore = defineStore("posRfid", () => {
 	const lines = ref([]);
 	const events = ref([]);
 	const busy = ref(false);
+	// item_code -> pieces approved on this basket to sell although their tag will not read
+	const unread = ref({});
 	// serial_no -> true once it has been pushed into the cart
 	const inCart = ref(new Set());
 	// Units on their way off the basket; never pushed back into the cart meanwhile.
@@ -46,10 +48,21 @@ export const usePosRfidStore = defineStore("posRfid", () => {
 	const handPickCheck = computed(
 		() => enabled.value && !!config.value.hand_pick_check,
 	);
+	// A piece whose tag is damaged or missing may be sold by hand, with a reason (RFID Settings switch).
+	const unreadSale = computed(
+		() => handPickCheck.value && !!config.value.unread_sale,
+	);
+	const unreadNeedsManager = computed(
+		() => !!config.value.unread_needs_manager,
+	);
+	const unreadReasons = computed(
+		() => config.value.unread_reasons || ["Tag Damaged", "Tag Missing"],
+	);
 
 	function applyView(view) {
 		basket.value = view.basket;
 		lines.value = view.lines || [];
+		unread.value = view.unread || {};
 	}
 
 	async function load(posProfile) {
@@ -119,6 +132,24 @@ export const usePosRfidStore = defineStore("posRfid", () => {
 		}
 	}
 
+	/** Approve pieces of an item whose tag will not read; throws with the server's message when refused. */
+	async function approveUnread({ itemCode, qty = 1, reason, note, manager, password }) {
+		return serial(async () => {
+			if (!basket.value) await openBasket();
+			const res = await call("rfid_retail.api.pos.approve_unread", {
+				basket: basket.value,
+				item_code: itemCode,
+				qty,
+				reason,
+				note: note || null,
+				manager: manager || null,
+				password: password || null,
+			});
+			unread.value = res.unread || {};
+			return res;
+		});
+	}
+
 	const keyOf = (line) => line.key || line.serial_no;
 
 	/** Lines complete on the tray but not yet in the cart. */
@@ -157,6 +188,7 @@ export const usePosRfidStore = defineStore("posRfid", () => {
 		basket.value = null;
 		lines.value = [];
 		events.value = [];
+		unread.value = {};
 		inCart.value = new Set();
 		if (reopen && enabled.value)
 			openBasket().catch((e) => log.error("Could not open next basket", e));
@@ -187,6 +219,11 @@ export const usePosRfidStore = defineStore("posRfid", () => {
 		blocked,
 		requireScan,
 		handPickCheck,
+		unread,
+		unreadSale,
+		unreadNeedsManager,
+		unreadReasons,
+		approveUnread,
 		load,
 		scan,
 		removeUnit,
