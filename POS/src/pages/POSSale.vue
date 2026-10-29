@@ -720,6 +720,116 @@
 				</template>
 			</Dialog>
 
+			<!-- RFID: every piece in stock has a tag, but this piece's tag will not read -->
+			<Dialog
+				:model-value="!!rfidUnreadPrompt"
+				:options="{ title: __('Tag will not read?'), size: 'sm' }"
+				@update:model-value="(open) => !open && closeRfidUnread(false)"
+			>
+				<template #body-content>
+					<!-- pointerdown.stop: the dialog overlay would otherwise keep these inputs from taking focus -->
+					<div v-if="rfidUnreadPrompt" class="py-3 space-y-3 text-sm text-gray-700" @pointerdown.stop>
+						<p>
+							{{
+								__("Every piece of {0} in stock carries an RFID tag. Put the piece on the tray first. Sell it by hand only if its tag is damaged or missing.", [
+									rfidUnreadPrompt.name,
+								])
+							}}
+						</p>
+						<p v-if="rfidUnreadPrompt.qty > 1" class="font-medium">
+							{{ __("Pieces without a tag read: {0}", [rfidUnreadPrompt.qty]) }}
+						</p>
+						<div class="flex gap-2" v-if="!rfidUnreadRequest || rfidUnreadRequest.status !== 'Pending'">
+							<button
+								v-for="reason in rfidStore.unreadReasons"
+								:key="reason"
+								type="button"
+								class="flex-1 h-9 rounded-lg border text-sm font-medium"
+								:class="
+									rfidUnreadForm.reason === reason
+										? 'bg-blue-600 border-blue-600 text-white'
+										: 'bg-white border-gray-300 text-gray-700'
+								"
+								@click="rfidUnreadForm.reason = reason"
+							>
+								{{ __(reason) }}
+							</button>
+						</div>
+						<input
+							v-if="!rfidUnreadRequest || rfidUnreadRequest.status !== 'Pending'"
+							v-model="rfidUnreadForm.note"
+							type="text"
+							class="w-full h-9 px-3 rounded-lg border border-gray-300 text-sm"
+							:placeholder="__('Note (optional), e.g. tag torn')"
+						/>
+						<div
+							v-if="rfidUnreadMode === 'pin' && rfidUnreadRequest && rfidUnreadRequest.status === 'Pending'"
+							class="space-y-2 rounded-lg bg-blue-50 p-3"
+						>
+							<p class="text-xs text-blue-800">
+								{{
+									__("PIN sent to {0} approver(s){1}. Valid till {2}. They can also approve from the notification; this screen moves on by itself.", [
+										rfidUnreadRequest.sent_to,
+										rfidUnreadRequest.whatsapp ? __(" by WhatsApp and notification") : __(" as a notification"),
+										rfidUnreadValidTill,
+									])
+								}}
+							</p>
+							<input
+								v-model="rfidUnreadForm.pin"
+								type="text"
+								inputmode="numeric"
+								maxlength="6"
+								autocomplete="one-time-code"
+								class="w-full h-11 px-3 rounded-lg border border-gray-300 text-center text-lg tracking-[0.4em] font-semibold"
+								:placeholder="__('6 digit PIN')"
+								@keydown.enter="confirmRfidUnreadPin"
+							/>
+						</div>
+						<button
+							v-if="rfidStore.unreadApproval === 'pin_or_password' && !(rfidUnreadRequest && rfidUnreadRequest.status === 'Pending')"
+							type="button"
+							class="text-xs text-blue-600 underline"
+							@click="rfidUnreadUseLogin = !rfidUnreadUseLogin"
+						>
+							{{ rfidUnreadUseLogin ? __("Use a PIN instead") : __("Approver is here: use their login instead") }}
+						</button>
+						<div v-if="rfidUnreadMode === 'password'" class="space-y-2 rounded-lg bg-gray-50 p-3">
+							<p class="text-xs font-medium text-gray-600">{{ __("Approver login") }}</p>
+							<input
+								v-model="rfidUnreadForm.manager"
+								type="text"
+								autocomplete="off"
+								class="w-full h-9 px-3 rounded-lg border border-gray-300 text-sm"
+								:placeholder="__('Approver login (email)')"
+							/>
+							<input
+								v-model="rfidUnreadForm.password"
+								type="password"
+								autocomplete="new-password"
+								class="w-full h-9 px-3 rounded-lg border border-gray-300 text-sm"
+								:placeholder="__('Approver password')"
+								@keydown.enter="approveRfidUnread"
+							/>
+						</div>
+						<p class="text-xs text-gray-500">
+							{{ __("The tag left in the system is closed by the next stock count of this item.") }}
+						</p>
+						<p v-if="rfidUnreadError" class="text-sm text-red-600">{{ rfidUnreadError }}</p>
+					</div>
+				</template>
+				<template #actions>
+					<div class="flex gap-2 w-full">
+						<Button class="flex-1" variant="subtle" @click="closeRfidUnread(false)">
+							{{ __("Scan the tag") }}
+						</Button>
+						<Button class="flex-1" variant="solid" :loading="rfidUnreadBusy" @click="rfidUnreadPrimary">
+							{{ rfidUnreadPrimaryLabel }}
+						</Button>
+					</div>
+				</template>
+			</Dialog>
+
 			<!-- Clear Cart Confirmation Dialog -->
 			<Dialog
 				v-model="uiStore.showClearCartDialog"
@@ -1677,6 +1787,7 @@ watch(
 );
 
 onUnmounted(() => {
+	clearInterval(rfidUnreadPoll);
 	window.removeEventListener("resize", () => {
 		uiStore.setWindowWidth(window.innerWidth);
 		updateLayoutBounds();
@@ -1928,16 +2039,23 @@ function rfidTooManyMessage(name, check) {
 		: __("Every piece of {0} in stock has an RFID tag. Put it on the RFID tray instead of picking it by hand.", [name]);
 }
 
+/** Untagged pieces in stock plus pieces approved on this bill although their tag will not read. */
+function rfidHandPickRoom(itemCode, check) {
+	return (check?.untagged || 0) + (rfidStore.unread[itemCode] || 0);
+}
+
 async function rfidManualAddAllowed(item) {
 	if (!rfidStore.handPickCheck || !item?.item_code) return true;
 	const check = await rfidCheck(item.item_code);
 	if (!check?.tagged) return true;
 	const name = item.item_name || item.item_code;
 	const handPicked = rfidHandPickedQty(item.item_code);
-	if (handPicked + 1 > check.untagged) {
+	if (handPicked + 1 > rfidHandPickRoom(item.item_code, check)) {
+		if (rfidStore.unreadSale) return askRfidUnread(item.item_code, name, 1);
 		showWarning(rfidTooManyMessage(name, check));
 		return false;
 	}
+	if (rfidStore.unread[item.item_code]) return true; // approved on this bill already
 	if (handPicked > 0) return true; // already confirmed for this bill
 	const ok = await new Promise((resolve) => {
 		rfidManualPrompt.value = { item, ...check, resolve };
@@ -1954,12 +2072,173 @@ async function rfidHandPickedProblem() {
 		const handPicked = rfidHandPickedQty(code);
 		if (!handPicked) continue;
 		const check = await rfidCheck(code);
-		if (check?.tagged && handPicked > check.untagged) {
+		const room = rfidHandPickRoom(code, check);
+		if (check?.tagged && handPicked > room) {
 			const line = cartStore.invoiceItems.find((l) => l.item_code === code);
-			return rfidTooManyMessage(line?.item_name || code, check);
+			const name = line?.item_name || code;
+			if (rfidStore.unreadSale && (await askRfidUnread(code, name, handPicked - room))) continue;
+			return rfidTooManyMessage(name, check);
 		}
 	}
 	return null;
+}
+
+// RFID counter: the customer's piece has a tag that will not read (damaged or missing) while every
+// piece of the item in stock carries a tag. With a reason (and a manager's approval when needed) it is
+// sold by hand; the tag left behind is settled later by a stock count of the item.
+const rfidUnreadPrompt = ref(null);
+const rfidUnreadForm = ref({ reason: "", note: "", manager: "", password: "", pin: "" });
+const rfidUnreadBusy = ref(false);
+const rfidUnreadError = ref("");
+// PIN approval: the open request, and whether the cashier switched to the approver's login instead
+const rfidUnreadRequest = ref(null);
+const rfidUnreadUseLogin = ref(false);
+let rfidUnreadPoll = null;
+
+const rfidUnreadMode = computed(() => {
+	const mode = rfidStore.unreadApproval;
+	if (mode === "pin_or_password") return rfidUnreadUseLogin.value ? "password" : "pin";
+	return mode;
+});
+
+function askRfidUnread(itemCode, name, qty) {
+	rfidUnreadForm.value = { reason: rfidStore.unreadReasons[0] || "", note: "", manager: "", password: "", pin: "" };
+	rfidUnreadError.value = "";
+	rfidUnreadRequest.value = null;
+	rfidUnreadUseLogin.value = false;
+	return new Promise((resolve) => {
+		rfidUnreadPrompt.value = { itemCode, name, qty, resolve };
+	});
+}
+
+function stopRfidUnreadPoll() {
+	clearInterval(rfidUnreadPoll);
+	rfidUnreadPoll = null;
+}
+
+function closeRfidUnread(ok) {
+	stopRfidUnreadPoll();
+	const prompt = rfidUnreadPrompt.value;
+	rfidUnreadPrompt.value = null;
+	rfidUnreadRequest.value = null;
+	rfidUnreadForm.value.password = "";
+	rfidUnreadForm.value.pin = "";
+	prompt?.resolve(ok);
+}
+
+function rfidUnreadApproved(by) {
+	const prompt = rfidUnreadPrompt.value;
+	showSuccess(__("Approved by {0}: {1} sold without reading its tag", [by || "", prompt?.name || ""]));
+	closeRfidUnread(true);
+}
+
+/** Request status from a PIN check or a poll: approved closes the dialog, anything final asks again. */
+function applyRfidUnreadStatus(res) {
+	if (!rfidUnreadRequest.value) return;
+	rfidUnreadRequest.value = { ...rfidUnreadRequest.value, status: res.status };
+	if (res.status === "Approved") return rfidUnreadApproved(res.approved_by_name || res.approved_by);
+	if (res.error) rfidUnreadError.value = res.error;
+	if (res.status !== "Pending") {
+		stopRfidUnreadPoll();
+		if (!res.error) rfidUnreadError.value = __("This request is {0}. Ask again.", [__(res.status)]);
+	}
+}
+
+async function askRfidUnreadPin() {
+	const prompt = rfidUnreadPrompt.value;
+	if (!prompt || rfidUnreadBusy.value) return;
+	const form = rfidUnreadForm.value;
+	rfidUnreadBusy.value = true;
+	rfidUnreadError.value = "";
+	try {
+		const res = await rfidStore.requestUnreadPin({
+			itemCode: prompt.itemCode,
+			qty: prompt.qty,
+			reason: form.reason,
+			note: form.note.trim(),
+		});
+		if (!res.request) return rfidUnreadApproved(res.approved_by); // no approval needed after all
+		rfidUnreadRequest.value = res;
+		form.pin = "";
+		stopRfidUnreadPoll();
+		rfidUnreadPoll = setInterval(async () => {
+			try {
+				applyRfidUnreadStatus(await rfidStore.unreadApprovalStatus(res.request));
+			} catch (error) {
+				/* keep waiting; the PIN still works */
+			}
+		}, 3000);
+	} catch (error) {
+		rfidUnreadError.value = parseError(error).message;
+	} finally {
+		rfidUnreadBusy.value = false;
+	}
+}
+
+async function confirmRfidUnreadPin() {
+	const req = rfidUnreadRequest.value;
+	const pin = rfidUnreadForm.value.pin.replace(/\D/g, "");
+	if (!req || rfidUnreadBusy.value) return;
+	if (pin.length !== 6) {
+		rfidUnreadError.value = __("Enter the 6 digit PIN.");
+		return;
+	}
+	rfidUnreadBusy.value = true;
+	rfidUnreadError.value = "";
+	try {
+		applyRfidUnreadStatus(await rfidStore.confirmUnreadPin(req.request, pin));
+		rfidUnreadForm.value.pin = "";
+	} catch (error) {
+		rfidUnreadError.value = parseError(error).message;
+	} finally {
+		rfidUnreadBusy.value = false;
+	}
+}
+
+function rfidUnreadPrimary() {
+	if (rfidUnreadMode.value !== "pin") return approveRfidUnread();
+	const status = rfidUnreadRequest.value?.status;
+	return status === "Pending" ? confirmRfidUnreadPin() : askRfidUnreadPin();
+}
+
+const rfidUnreadPrimaryLabel = computed(() => {
+	if (rfidUnreadMode.value !== "pin") return __("Sell without tag");
+	const status = rfidUnreadRequest.value?.status;
+	if (status === "Pending") return __("Confirm PIN");
+	return status ? __("Ask again") : __("Ask approver for PIN");
+});
+
+const rfidUnreadValidTill = computed(() => {
+	const at = rfidUnreadRequest.value?.expires_at;
+	return at ? String(at).slice(11, 16) : "";
+});
+
+async function approveRfidUnread() {
+	const prompt = rfidUnreadPrompt.value;
+	if (!prompt || rfidUnreadBusy.value) return;
+	const form = rfidUnreadForm.value;
+	if (rfidUnreadMode.value === "password" && (!form.manager.trim() || !form.password)) {
+		rfidUnreadError.value = __("An approver has to approve this. Enter the approver's login and password.");
+		return;
+	}
+	rfidUnreadBusy.value = true;
+	rfidUnreadError.value = "";
+	try {
+		const res = await rfidStore.approveUnread({
+			itemCode: prompt.itemCode,
+			qty: prompt.qty,
+			reason: form.reason,
+			note: form.note.trim(),
+			manager: form.manager.trim(),
+			password: form.password,
+		});
+		rfidUnreadApproved(res.approved_by);
+	} catch (error) {
+		rfidUnreadError.value = parseError(error).message;
+		form.password = "";
+	} finally {
+		rfidUnreadBusy.value = false;
+	}
 }
 
 function answerRfidManualPrompt(ok) {
