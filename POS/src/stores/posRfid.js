@@ -55,6 +55,10 @@ export const usePosRfidStore = defineStore("posRfid", () => {
 	const unreadNeedsManager = computed(
 		() => !!config.value.unread_needs_manager,
 	);
+	// self | pin | password | pin_or_password (who approves, and how)
+	const unreadApproval = computed(
+		() => config.value.unread_approval || (unreadNeedsManager.value ? "password" : "self"),
+	);
 	const unreadReasons = computed(
 		() => config.value.unread_reasons || ["Tag Damaged", "Tag Missing"],
 	);
@@ -150,6 +154,36 @@ export const usePosRfidStore = defineStore("posRfid", () => {
 		});
 	}
 
+	/** Ask the approvers for a PIN; returns { request, expires_at, sent_to } (or the approval when none is needed). */
+	async function requestUnreadPin({ itemCode, qty = 1, reason, note }) {
+		return serial(async () => {
+			if (!basket.value) await openBasket();
+			const res = await call("rfid_retail.api.pos.request_unread_approval", {
+				basket: basket.value,
+				item_code: itemCode,
+				qty,
+				reason,
+				note: note || null,
+			});
+			if (res.unread) unread.value = res.unread;
+			return res;
+		});
+	}
+
+	/** Type the PIN an approver gave; returns { status, error }. */
+	async function confirmUnreadPin(request, pin) {
+		const res = await call("rfid_retail.api.pos.confirm_unread_pin", { request, pin });
+		if (res.unread) unread.value = res.unread;
+		return res;
+	}
+
+	/** Polled while waiting: the approver may approve with one click instead. */
+	async function unreadApprovalStatus(request) {
+		const res = await call("rfid_retail.api.pos.unread_approval_status", { request });
+		if (res.unread) unread.value = res.unread;
+		return res;
+	}
+
 	const keyOf = (line) => line.key || line.serial_no;
 
 	/** Lines complete on the tray but not yet in the cart. */
@@ -222,8 +256,12 @@ export const usePosRfidStore = defineStore("posRfid", () => {
 		unread,
 		unreadSale,
 		unreadNeedsManager,
+		unreadApproval,
 		unreadReasons,
 		approveUnread,
+		requestUnreadPin,
+		confirmUnreadPin,
+		unreadApprovalStatus,
 		load,
 		scan,
 		removeUnit,
