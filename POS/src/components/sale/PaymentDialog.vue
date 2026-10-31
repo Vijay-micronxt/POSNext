@@ -612,9 +612,11 @@
 									<div class="text-sm font-semibold text-gray-900 text-end">
 										{{
 											formatCurrency(
-												item.amount ||
-													(item.qty || item.quantity) *
-														(item.rate || item.price_list_rate)
+												roundPayable
+													? cartStore.displayLineAmount(item)
+													: item.amount ||
+															(item.qty || item.quantity) *
+																(item.rate || item.price_list_rate)
 											)
 										}}
 									</div>
@@ -667,7 +669,7 @@
 						<div class="border-t border-gray-200 bg-gray-50 px-3 py-2 space-y-1">
 							<!-- Additional Discount Row -->
 							<div
-								v-if="settingsStore.allowAdditionalDiscount"
+								v-if="settingsStore.allowAdditionalDiscount || roundPayable"
 								class="pb-1.5 mb-1 border-b border-dashed border-orange-200"
 							>
 								<!-- Label with calculated amount -->
@@ -695,10 +697,24 @@
 										class="text-xs font-bold text-red-600"
 									>
 										-{{ formatCurrency(calculatedAdditionalDiscount) }}
+										<template v-if="roundPayable && discountBaseAmount > 0">
+											({{
+												(
+													(calculatedAdditionalDiscount * 100) /
+													discountBaseAmount
+												).toFixed(2)
+											}}%)
+										</template>
 									</span>
 								</div>
 								<!-- Grid: 1/2 Counter Input, 1/4 Percentage, 1/4 Amount -->
-								<div class="grid grid-cols-4 gap-1.5">
+								<div
+									class="grid grid-cols-4 gap-1.5"
+									:class="{
+										'pointer-events-none opacity-60':
+											!settingsStore.allowAdditionalDiscount,
+									}"
+								>
 									<!-- Counter Input (2/4 = 1/2) -->
 									<div
 										class="col-span-2 flex items-center border border-orange-300 rounded-lg bg-white overflow-hidden"
@@ -737,7 +753,7 @@
 											:max="
 												additionalDiscountType === 'percentage'
 													? 100
-													: subtotal
+													: discountBaseAmount
 											"
 											step="1"
 											class="flex-1 h-9 px-1 text-sm font-semibold text-center bg-transparent border-none focus:outline-none focus:ring-0 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
@@ -2003,6 +2019,7 @@
 
 <script setup>
 import { usePOSSettingsStore } from "@/stores/posSettings";
+import { usePOSCartStore } from "@/stores/posCart";
 import {
 	DEFAULT_CURRENCY,
 	formatCurrency as formatCurrencyUtil,
@@ -2022,6 +2039,7 @@ import { useQuickAmounts } from "@/composables/useQuickAmounts";
 
 const log = logger.create("PaymentDialog");
 const settingsStore = usePOSSettingsStore();
+const cartStore = usePOSCartStore();
 const { showWarning, showInfo } = useToast();
 
 const props = defineProps({
@@ -2078,6 +2096,21 @@ const props = defineProps({
 	additionalDiscount: {
 		type: Number,
 		default: 0,
+	},
+	/** Round Up Payable is folding the bill's discount into Additional Discount. */
+	roundPayable: {
+		type: Boolean,
+		default: false,
+	},
+	/** The discount that makes the payable a round figure (the prefill). */
+	roundedDiscount: {
+		type: Number,
+		default: 0,
+	},
+	/** What Additional Discount is taken off; the subtotal unless Round Up Payable says otherwise. */
+	discountBase: {
+		type: Number,
+		default: null,
 	},
 	targetDoctype: {
 		type: String,
@@ -2228,6 +2261,8 @@ function numpadAddPayment() {
 
 // Additional discount state
 const localAdditionalDiscount = ref(0);
+// The cashier changed Additional Discount since the dialog opened (Round Up Payable stops refilling it)
+const additionalDiscountEdited = ref(false);
 // Initialize discount type from settings (default to percentage if enabled, otherwise amount)
 const additionalDiscountType = ref(settingsStore.usePercentageDiscount ? "percentage" : "amount");
 
@@ -2659,9 +2694,15 @@ const remainingAvailableCredit = computed(() => {
 });
 
 // Calculate the actual discount amount based on type (percentage or fixed amount)
+const discountBaseAmount = computed(() =>
+	props.discountBase === null || props.discountBase === undefined
+		? props.subtotal
+		: props.discountBase
+);
+
 const calculatedAdditionalDiscount = computed(() => {
 	if (additionalDiscountType.value === "percentage") {
-		return roundCurrency((props.subtotal * localAdditionalDiscount.value) / 100);
+		return roundCurrency((discountBaseAmount.value * localAdditionalDiscount.value) / 100);
 	}
 	return roundCurrency(localAdditionalDiscount.value);
 });
@@ -3439,18 +3480,24 @@ function getMethodTotal(methodName) {
 
 // Additional discount handlers
 function handleAdditionalDiscountChange() {
+	additionalDiscountEdited.value = true;
+	const base = discountBaseAmount.value;
+	// Round Up Payable: the field holds the offer's / coupon's discount too, so the cashier may
+	// keep at least that much even when it is over the manual discount limit.
+	const keepUpTo = props.roundPayable ? props.roundedDiscount || 0 : 0;
 	let discountValue = localAdditionalDiscount.value;
 	let discountAmount = 0;
 
 	// If percentage mode, calculate amount
 	if (additionalDiscountType.value === "percentage") {
 		// Validate against max_discount_allowed if configured
-		if (
-			settingsStore.maxDiscountAllowed > 0 &&
-			discountValue > settingsStore.maxDiscountAllowed
-		) {
-			localAdditionalDiscount.value = settingsStore.maxDiscountAllowed;
-			discountValue = settingsStore.maxDiscountAllowed;
+		const maxPct =
+			settingsStore.maxDiscountAllowed > 0 && base > 0
+				? Math.max(settingsStore.maxDiscountAllowed, (keepUpTo * 100) / base)
+				: settingsStore.maxDiscountAllowed;
+		if (settingsStore.maxDiscountAllowed > 0 && discountValue > maxPct) {
+			localAdditionalDiscount.value = roundCurrency(maxPct);
+			discountValue = maxPct;
 			// Show warning toast
 			showWarning(
 				__("Maximum allowed discount is {0}%", [settingsStore.maxDiscountAllowed])
@@ -3464,16 +3511,15 @@ function handleAdditionalDiscountChange() {
 		}
 
 		// Convert percentage to amount
-		discountAmount = (props.subtotal * discountValue) / 100;
+		discountAmount = (base * discountValue) / 100;
 	} else {
 		// Amount mode
 		discountAmount = discountValue;
 
 		// For amount mode, check if it exceeds percentage limit when converted
-		if (settingsStore.maxDiscountAllowed > 0 && props.subtotal > 0) {
-			const percentageEquivalent = (discountAmount / props.subtotal) * 100;
-			if (percentageEquivalent > settingsStore.maxDiscountAllowed) {
-				const maxAmount = (props.subtotal * settingsStore.maxDiscountAllowed) / 100;
+		if (settingsStore.maxDiscountAllowed > 0 && base > 0) {
+			const maxAmount = Math.max((base * settingsStore.maxDiscountAllowed) / 100, keepUpTo);
+			if (discountAmount > maxAmount) {
 				localAdditionalDiscount.value = maxAmount;
 				discountAmount = maxAmount;
 				// Show warning toast
@@ -3489,11 +3535,11 @@ function handleAdditionalDiscountChange() {
 	}
 
 	// Ensure discount doesn't exceed subtotal
-	if (discountAmount > props.subtotal) {
+	if (discountAmount > base) {
 		if (additionalDiscountType.value === "amount") {
-			localAdditionalDiscount.value = props.subtotal;
+			localAdditionalDiscount.value = base;
 		}
-		discountAmount = props.subtotal;
+		discountAmount = base;
 	}
 
 	// Ensure non-negative
@@ -3506,6 +3552,11 @@ function handleAdditionalDiscountChange() {
 }
 
 function handleAdditionalDiscountTypeChange() {
+	// Round Up Payable: same discount, shown the other way (switching is not a change by the cashier)
+	if (props.roundPayable) {
+		fillAdditionalDiscount(props.additionalDiscount);
+		return;
+	}
 	// Don't reset - preserve last value when toggling type
 	// Just recalculate to ensure it's within limits
 	handleAdditionalDiscountChange();
@@ -3529,8 +3580,35 @@ watch(
 	() => props.modelValue,
 	(isOpen) => {
 		if (isOpen) {
+			additionalDiscountEdited.value = false;
+			if (props.roundPayable) {
+				fillAdditionalDiscount(props.additionalDiscount);
+				return;
+			}
 			// Only sync when dialog opens, not continuously
 			localAdditionalDiscount.value = props.additionalDiscount || 0;
+		}
+	}
+);
+
+/** Round Up Payable: show an amount in the field, as an amount or as % of the bill. */
+function fillAdditionalDiscount(amount) {
+	const value = Number(amount) || 0;
+	const base = discountBaseAmount.value;
+	localAdditionalDiscount.value =
+		additionalDiscountType.value === "percentage"
+			? base > 0
+				? roundCurrency((value * 100) / base)
+				: 0
+			: roundCurrency(value);
+}
+
+// Round Up Payable: offers can settle after the dialog opened; follow them until the cashier edits.
+watch(
+	() => [props.roundPayable, props.additionalDiscount],
+	([roundPayable, amount]) => {
+		if (props.modelValue && roundPayable && !additionalDiscountEdited.value) {
+			fillAdditionalDiscount(amount);
 		}
 	}
 );

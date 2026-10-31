@@ -995,8 +995,13 @@
 										}}
 									</span>
 									<!-- Discount Badge -->
+									<!-- Round Up Payable puts the whole discount on the bill, so no line badge -->
 									<div
-										v-if="item.discount_amount && item.discount_amount > 0"
+										v-if="
+											item.discount_amount &&
+											item.discount_amount > 0 &&
+											!cartStore.roundPayableActive
+										"
 										class="inline-flex items-center px-1.5 py-0.5 bg-gradient-to-r from-red-50 to-orange-50 text-red-700 rounded-full text-[9px] font-bold border border-red-200 flex-shrink-0"
 									>
 										<svg
@@ -1285,9 +1290,7 @@
 										class="text-xs sm:text-sm font-bold text-blue-600 leading-none"
 									>
 										{{
-											formatCurrency(
-												item.amount || item.rate * item.quantity
-											)
+											formatCurrency(cartStore.displayLineAmount(item))
 										}}
 									</div>
 								</div>

@@ -493,7 +493,14 @@
 				:write-off-limit="shiftStore.writeOffLimit"
 				:customer="cartStore.customer"
 				:company="shiftStore.profileCompany"
-				:additional-discount="cartStore.additionalDiscount"
+				:additional-discount="
+					cartStore.roundPayableActive ? cartStore.billDiscount : cartStore.additionalDiscount
+				"
+				:round-payable="cartStore.roundPayableActive"
+				:rounded-discount="cartStore.roundedBillDiscount"
+				:discount-base="
+					cartStore.roundPayableActive ? cartStore.fullPriceTotals.gross : cartStore.subtotal
+				"
 				:items="cartStore.invoiceItems"
 				:tax-amount="cartStore.totalTax"
 				:discount-amount="cartStore.totalDiscount"
@@ -2366,6 +2373,13 @@ async function handleEditItem(updatedItem) {
 }
 
 function handleAdditionalDiscountUpdate(discountAmount) {
+	// Round Up Payable: the field holds the bill's whole discount; the cashier's figure is kept
+	// as it is and offers / coupons stay on their own value underneath.
+	if (posSettingsStore.roundUpPayable) {
+		cartStore.setManualBillDiscount(discountAmount);
+		return;
+	}
+
 	// Update the additional discount value in the cart store
 	cartStore.additionalDiscount = discountAmount;
 
@@ -2516,6 +2530,8 @@ async function handlePaymentCompleted(paymentData) {
 				grand_total: cartStore.grandTotal,
 				total_tax: cartStore.totalTax,
 				total_discount: cartStore.totalDiscount,
+				// Round Up Payable: lines go at full price, the discount on the bill
+				...(cartStore.roundPayableActive ? cartStore.billDiscountFields() : {}),
 				write_off_amount: paymentData.write_off_amount || 0,
 				change_amount: paymentData.change_amount || 0,
 				is_credit_sale: paymentData.is_credit_sale ? 1 : 0,
@@ -2566,6 +2582,8 @@ async function handlePaymentCompleted(paymentData) {
 				})),
 				grand_total: grandTotal,
 				total_taxes_and_charges: cartStore.totalTax,
+				// Round Up Payable: lines are at full price, so the receipt needs the bill's discount
+				...(invoiceData.apply_discount_on ? { discount_amount: invoiceData.discount_amount } : {}),
 				payments: invoiceData.payments,
 				paid_amount: paidAmount,
 				change_amount: paymentData.change_amount || 0,
@@ -2925,6 +2943,7 @@ async function handleLoadDraft(draft) {
 		}
 
 		const draftData = await draftsStore.loadDraft(draft);
+		cartStore.setManualBillDiscount(null); // a discount typed on the bill on screen is not this bill's
 		cartStore.invoiceItems = draftData.items;
 		cartStore.setCustomer(draftData.customer);
 		cartStore.currentDraftId = draft.draft_id; // Set current draft ID

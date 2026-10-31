@@ -16,6 +16,8 @@ export const usePOSSettingsStore = defineStore("posSettings", () => {
 		loyalty_to_wallet: 1,
 		// General Settings
 		max_discount_allowed: 0,
+		round_up_payable: 0, // Round a discounted bill's payable up (see posCart)
+		payable_rounding_step: "10",
 		use_percentage_discount: 0,
 		allow_user_to_edit_additional_discount: 0,
 		allow_user_to_edit_item_discount: 1, // Allow item-level discounts
@@ -87,6 +89,11 @@ export const usePOSSettingsStore = defineStore("posSettings", () => {
 		() => Number.parseFloat(settings.value.max_discount_allowed) || 0
 	);
 	const usePercentageDiscount = computed(() => Boolean(settings.value.use_percentage_discount));
+	// A discounted bill is paid in a round figure: payable rounded up to the next step
+	const roundUpPayable = computed(() => Boolean(Number(settings.value.round_up_payable)));
+	const payableRoundingStep = computed(
+		() => Number.parseFloat(settings.value.payable_rounding_step) || 10
+	);
 	const allowAdditionalDiscount = computed(() =>
 		Boolean(settings.value.allow_user_to_edit_additional_discount)
 	);
@@ -242,6 +249,8 @@ export const usePOSSettingsStore = defineStore("posSettings", () => {
 			loyalty_to_wallet: 1,
 			// General Settings
 			max_discount_allowed: 0,
+			round_up_payable: 0,
+			payable_rounding_step: "10",
 			use_percentage_discount: 0,
 			allow_user_to_edit_additional_discount: 0,
 			allow_user_to_edit_item_discount: 1,
@@ -357,6 +366,8 @@ export const usePOSSettingsStore = defineStore("posSettings", () => {
 		isEnabled,
 		maxDiscountAllowed,
 		usePercentageDiscount,
+		roundUpPayable,
+		payableRoundingStep,
 		allowAdditionalDiscount,
 		allowItemDiscount,
 		allowUserToEditRate,

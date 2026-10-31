@@ -21,6 +21,8 @@
   "allow_user_to_edit_rate",
   "use_percentage_discount",
   "max_discount_allowed",
+  "round_up_payable",
+  "payable_rounding_step",
   "column_break_general",
   "allow_credit_sale",
   "allow_customer_credit_payment",
@@ -197,6 +199,22 @@
    "fieldtype": "Float",
    "label": "Max Discount Percentage Allowed",
    "precision": "2"
+  },
+  {
+   "default": "0",
+   "description": "A bill with a discount (promotional offer or coupon) is paid in a round figure: the payable is rounded up to the next step and the whole discount is shown as Additional Discount. The cashier can still change it before payment.",
+   "fieldname": "round_up_payable",
+   "fieldtype": "Check",
+   "label": "Round Up Payable"
+  },
+  {
+   "default": "10",
+   "depends_on": "round_up_payable",
+   "description": "Round the payable up to the next multiple of this amount.",
+   "fieldname": "payable_rounding_step",
+   "fieldtype": "Select",
+   "label": "Round Up To",
+   "options": "1\n5\n10\n50\n100"
   },
   {
    "fieldname": "column_break_general",
@@ -558,7 +576,7 @@
  ],
  "index_web_pages_for_search": 1,
  "links": [],
- "modified": "2026-06-03 15:54:09.903964",
+ "modified": "2026-10-31 12:00:00.000000",
  "modified_by": "Administrator",
  "module": "POS Next",
  "name": "POS Settings",

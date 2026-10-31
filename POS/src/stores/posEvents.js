@@ -246,6 +246,8 @@ export const usePOSEventsStore = defineStore("posEvents", () => {
 		// Pricing/discount changes
 		const pricingFields = [
 			"max_discount_allowed",
+			"round_up_payable",
+			"payable_rounding_step",
 			"use_percentage_discount",
 			"allow_user_to_edit_additional_discount",
 			"allow_user_to_edit_item_discount",
