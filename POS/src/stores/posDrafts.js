@@ -1,11 +1,13 @@
 import {
 	deleteDraft,
+	getDraftById,
 	getDraftsCount,
 	saveDraft,
 	getAllDrafts,
 	updateDraft,
 } from "@/utils/draftManager";
 import { useToast } from "@/composables/useToast";
+import { usePosRfidStore } from "@/stores/posRfid";
 import { defineStore } from "pinia";
 import { ref } from "vue";
 
@@ -40,7 +42,8 @@ export const usePOSDraftsStore = defineStore("posDrafts", () => {
 		customer,
 		posProfile,
 		appliedOffers = [],
-		draftId = null
+		draftId = null,
+		rfid = null
 	) {
 		if (invoiceItems.length === 0) {
 			showWarning(__("Cannot save an empty cart as draft"));
@@ -53,6 +56,8 @@ export const usePOSDraftsStore = defineStore("posDrafts", () => {
 				customer: customer,
 				items: invoiceItems,
 				applied_offers: appliedOffers, // Save applied offers
+				// RFID counter: the held basket and the tags read, to get the tray back on resume
+				rfid,
 			};
 
 			let savedDraft;
@@ -82,6 +87,7 @@ export const usePOSDraftsStore = defineStore("posDrafts", () => {
 				items: draft.items || [],
 				customer: draft.customer,
 				applied_offers: draft.applied_offers || [], // Restore applied offers
+				rfid: draft.rfid || null,
 			};
 		} catch (error) {
 			console.error("Error loading draft:", error);
@@ -92,7 +98,10 @@ export const usePOSDraftsStore = defineStore("posDrafts", () => {
 
 	async function deleteDraftById(draftId) {
 		try {
+			const draft = await getDraftById(draftId);
 			await deleteDraft(draftId);
+			// A held RFID basket would keep its tags from being sold anywhere else.
+			usePosRfidStore().releaseHeld(draft?.rfid);
 			await loadDrafts(); // Refresh drafts list and count
 			showSuccess(__("Draft deleted successfully"));
 		} catch (error) {

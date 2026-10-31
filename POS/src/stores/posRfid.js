@@ -62,6 +62,8 @@ export const usePosRfidStore = defineStore("posRfid", () => {
 	const unreadReasons = computed(
 		() => config.value.unread_reasons || ["Tag Damaged", "Tag Missing"],
 	);
+	// The server can keep a held bill's basket (and the tags claimed on it) until the bill is resumed.
+	const canHold = computed(() => enabled.value && !!config.value.hold);
 
 	function applyView(view) {
 		basket.value = view.basket;
@@ -186,6 +188,120 @@ export const usePosRfidStore = defineStore("posRfid", () => {
 
 	const keyOf = (line) => line.key || line.serial_no;
 
+	/** Every code read for a line: its tags (server sends them), else the tag or serial it is known by. */
+	function lineCodes(line) {
+		if (line.epcs?.length) return line.epcs;
+		return [line.epc || line.serial_no].filter(Boolean);
+	}
+
+	/**
+	 * Hold: what the draft needs to get this bill's tray back on resume. The basket is kept on the
+	 * server when it can hold one; the codes read are kept too, to read them again into a new basket
+	 * if the held one cannot be resumed. Null when nothing on the tray belongs to this bill.
+	 */
+	function holdState() {
+		if (!enabled.value || !basket.value) return null;
+		const hasUnread = Object.keys(unread.value || {}).length > 0;
+		if (!lines.value.length && !hasUnread) return null;
+		return {
+			basket: canHold.value ? basket.value : null,
+			keys: [...inCart.value],
+			epcs: [...new Set(lines.value.flatMap(lineCodes))],
+		};
+	}
+
+	/** Hold, step 1: park the basket on the server. Throws when it cannot, so the bill is not held. */
+	async function hold(state) {
+		if (!state?.basket) return;
+		await serial(() => call("rfid_retail.api.pos.hold_basket", { basket: state.basket }));
+	}
+
+	/** The draft could not be saved after all: give the basket back to the bill on screen. */
+	async function undoHold(state) {
+		if (!state?.basket) return;
+		await serial(() =>
+			call("rfid_retail.api.pos.resume_basket", {
+				basket: state.basket,
+				pos_profile: profile.value,
+			}),
+		);
+	}
+
+	/**
+	 * Hold, step 2, called right before the cart is cleared: forget this bill's units locally (so the
+	 * cart watchers do not take them off the held basket) and start a new basket for the next bill.
+	 * Without server support the basket is cancelled instead; the draft keeps the codes read.
+	 */
+	async function finishHold(state) {
+		if (!enabled.value || !state) return; // nothing on the tray: the basket stays for the next bill
+		const current = basket.value;
+		inCart.value = new Set(); // synchronously, before the caller clears the cart
+		await serial(async () => {
+			try {
+				if (!state.basket && current)
+					await call("rfid_retail.api.pos.cancel_basket", { basket: current });
+			} finally {
+				reset(false);
+				await openBasket();
+			}
+		});
+	}
+
+	/**
+	 * Resume: get the held bill's tray back. Called after the draft's items are in the cart.
+	 * Takes back the held basket when the server can; otherwise (or when that fails) reads the
+	 * saved codes again into the current basket. Returns how many cart units are not on the tray.
+	 */
+	async function restore(state) {
+		if (!enabled.value || !state) return { missing: 0, events: [] };
+		return serial(async () => {
+			let view = null;
+			if (state.basket && canHold.value) {
+				try {
+					view = await call("rfid_retail.api.pos.resume_basket", {
+						basket: state.basket,
+						current: basket.value,
+						pos_profile: profile.value,
+					});
+				} catch (error) {
+					log.warn("Held basket could not be resumed, reading its tags again", error);
+					// Its tags are still claimed by it; let go so they can be read into this basket.
+					await call("rfid_retail.api.pos.release_held_basket", { basket: state.basket }).catch(() => {});
+				}
+			}
+			if (!view && state.epcs?.length) {
+				if (!basket.value) await openBasket();
+				view = await call("rfid_retail.api.pos.scan", {
+					basket: basket.value,
+					codes: state.epcs,
+					source: "RFID",
+				});
+			}
+			if (view) {
+				applyView(view);
+				events.value = view.events || [];
+			}
+			// Same tick as the lines: the tray must not push these units into the cart a second time.
+			const onTray = new Set(lines.value.map(keyOf));
+			const keys = state.keys || [];
+			inCart.value = new Set(keys.filter((k) => onTray.has(k)));
+			return {
+				missing: keys.filter((k) => !onTray.has(k)).length,
+				events: events.value,
+			};
+		});
+	}
+
+	/** A held draft was deleted: cancel its basket so its tags can be sold again. Never throws. */
+	async function releaseHeld(state) {
+		if (!enabled.value || !state?.basket || state.basket === basket.value) return;
+		try {
+			await call("rfid_retail.api.pos.release_held_basket", { basket: state.basket });
+		} catch (error) {
+			log.warn("Could not release held basket", state.basket, error);
+		}
+	}
+
 	/** Lines complete on the tray but not yet in the cart. */
 	function pendingForCart() {
 		return lines.value.filter(
@@ -258,6 +374,13 @@ export const usePosRfidStore = defineStore("posRfid", () => {
 		unreadNeedsManager,
 		unreadApproval,
 		unreadReasons,
+		canHold,
+		holdState,
+		hold,
+		undoHold,
+		finishHold,
+		restore,
+		releaseHeld,
 		approveUnread,
 		requestUnreadPin,
 		confirmUnreadPin,

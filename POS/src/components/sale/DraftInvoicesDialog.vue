@@ -199,7 +199,8 @@ import {
 	formatCurrency as formatCurrencyUtil,
 	roundCurrency,
 } from "@/utils/currency";
-import { clearAllDrafts, deleteDraft, getAllDrafts } from "@/utils/draftManager";
+import { clearAllDrafts, deleteDraft, getAllDrafts, getDraftById } from "@/utils/draftManager";
+import { usePosRfidStore } from "@/stores/posRfid";
 import { printInvoiceCustom } from "@/utils/printInvoice";
 import { useToast } from "@/composables/useToast";
 import { usePOSShiftStore } from "@/stores/posShift";
@@ -288,7 +289,10 @@ function handleDeleteDraft(draftId) {
 
 async function confirmDeleteDraft() {
 	try {
+		const draft = await getDraftById(draftToDelete.value);
 		await deleteDraft(draftToDelete.value);
+		// A held RFID basket would keep its tags from being sold anywhere else.
+		usePosRfidStore().releaseHeld(draft?.rfid);
 		await loadDrafts();
 		showDeleteDialog.value = false;
 		draftToDelete.value = null;
@@ -305,7 +309,10 @@ async function confirmDeleteDraft() {
 
 async function confirmClearAll() {
 	try {
+		const held = (await getAllDrafts()).map((d) => d.rfid).filter(Boolean);
 		await clearAllDrafts();
+		const rfid = usePosRfidStore();
+		for (const state of held) rfid.releaseHeld(state);
 		await loadDrafts();
 		showClearAllDialog.value = false;
 
