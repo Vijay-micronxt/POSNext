@@ -4,8 +4,12 @@ import { reactive } from "vue";
 
 globalThis.__ = (text, args = []) => String(text).replace(/\{(\d+)\}/g, (_, i) => args[i]);
 
-// Server stand-in for apply_offers: an offer listed in selected_offers gives its % on every line.
+// Server stand-in for apply_offers: an item offer listed in selected_offers gives its % on every
+// line; a whole-bill (Transaction) offer sets the header discount. Like the real server, a
+// whole-bill offer counts as applied only when the header discount it sets differs from the one
+// the cart sent, and otherwise the header discount sent is handed back.
 const RATES = { PROMO5: 5, PROMO10: 10 };
+const BILL_RATES = { BILL10: 10 };
 const applyOffersCalls = [];
 vi.mock("frappe-ui", () => ({
 	createResource: (opts) => ({
@@ -13,17 +17,25 @@ vi.mock("frappe-ui", () => ({
 			if (opts?.url !== "pos_next.api.invoices.apply_offers") return {};
 			applyOffersCalls.push(params.selected_offers);
 			const codes = params.selected_offers || [];
-			const pct = codes.reduce((sum, c) => sum + (RATES[c] || 0), 0);
+			const itemCodes = codes.filter((c) => RATES[c]);
+			const pct = itemCodes.reduce((sum, c) => sum + RATES[c], 0);
+			const sent = params.invoice_data.discount_amount || 0;
+			let header = sent;
+			const applied = [...itemCodes];
+			for (const c of codes.filter((c) => BILL_RATES[c])) {
+				const total = params.invoice_data.items.reduce((t, i) => t + i.price_list_rate * i.qty, 0);
+				header = Math.round(total * BILL_RATES[c]) / 100;
+				if (header !== sent) applied.push(c);
+			}
 			return {
 				items: params.invoice_data.items.map(() => ({
 					discount_percentage: pct,
 					discount_amount: 0,
-					pricing_rules: codes.length ? codes.join(",") : "",
+					pricing_rules: itemCodes.join(","),
 				})),
 				free_items: [],
-				applied_pricing_rules: codes,
-				// the server sends back the bill's header discount it was given (e.g. a coupon)
-				discount_amount: params.invoice_data.discount_amount || 0,
+				applied_pricing_rules: applied,
+				discount_amount: header,
 			};
 		}),
 		fetch: vi.fn(),
@@ -45,12 +57,18 @@ const offers = [
 	{ name: "PROMO5", title: "5% off", auto: true },
 	{ name: "PROMO10", title: "10% off", auto: true },
 ];
+const allOffers = [...offers, { name: "BILL10", title: "10% off the bill", auto: true }];
+let eligible = offers;
 vi.mock("@/stores/posOffers", () => ({
 	usePOSOffersStore: () =>
 		reactive({
 			hasFetched: true,
-			allEligibleOffers: offers,
-			autoEligibleOffers: offers,
+			get allEligibleOffers() {
+				return eligible;
+			},
+			get autoEligibleOffers() {
+				return eligible;
+			},
 			ensureOffersFetched: async () => {},
 			checkOfferEligibility: () => ({ eligible: true }),
 			updateCartSnapshot: () => {},
@@ -78,6 +96,7 @@ describe("removing an offer while billing", () => {
 	beforeEach(() => {
 		setActivePinia(createPinia());
 		applyOffersCalls.length = 0;
+		eligible = offers;
 	});
 
 	it("auto-applies both offers to begin with", async () => {
@@ -126,5 +145,35 @@ describe("removing an offer while billing", () => {
 		await cart.removeOffer("PROMO10", {});
 		cart.clearCart();
 		expect(cart.declinedOffers).toEqual([]);
+	});
+
+	it("a whole-bill offer: removed while another stays, then applied again", async () => {
+		eligible = [offers[0], allOffers[2]]; // PROMO5 on the lines + BILL10 on the bill
+		const cart = await cartWithBothOffers();
+		expect(cart.appliedOffers.map((o) => o.code).sort()).toEqual(["BILL10", "PROMO5"]);
+		expect(cart.additionalDiscount).toBe(30);
+		expect(cart.grandTotal).toBe(255); // 300 - 15 - 30
+
+		await cart.removeOffer("BILL10", {});
+		expect(cart.additionalDiscount).toBe(0); // its discount goes with it
+		expect(cart.grandTotal).toBe(285);
+		await wait();
+		expect(cart.additionalDiscount).toBe(0); // and stays gone after automatic processing
+
+		await cart.applyOffer({ name: "BILL10", title: "10% off the bill" }, {});
+		expect(cart.appliedOffers.map((o) => o.code).sort()).toEqual(["BILL10", "PROMO5"]);
+		expect(cart.additionalDiscount).toBe(30);
+		expect(cart.grandTotal).toBe(255);
+	});
+
+	it("removing a whole-bill offer keeps a coupon's discount", async () => {
+		eligible = [allOffers[2]];
+		const cart = await cartWithBothOffers();
+		expect(cart.additionalDiscount).toBe(30);
+		cart.applyDiscountToCart({ name: "CPN", amount: 20 }); // the coupon replaces the header discount
+		await cart.removeOffer("BILL10", {});
+		expect(cart.appliedOffers).toEqual([]);
+		expect(cart.additionalDiscount).toBe(20);
+		expect(cart.grandTotal).toBe(280);
 	});
 });

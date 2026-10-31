@@ -2261,8 +2261,6 @@ function numpadAddPayment() {
 
 // Additional discount state
 const localAdditionalDiscount = ref(0);
-// The cashier changed Additional Discount since the dialog opened (Round Up Payable stops refilling it)
-const additionalDiscountEdited = ref(false);
 // Initialize discount type from settings (default to percentage if enabled, otherwise amount)
 const additionalDiscountType = ref(settingsStore.usePercentageDiscount ? "percentage" : "amount");
 
@@ -3480,7 +3478,6 @@ function getMethodTotal(methodName) {
 
 // Additional discount handlers
 function handleAdditionalDiscountChange() {
-	additionalDiscountEdited.value = true;
 	const base = discountBaseAmount.value;
 	// Round Up Payable: the field holds the offer's / coupon's discount too, so the cashier may
 	// keep at least that much even when it is over the manual discount limit.
@@ -3580,18 +3577,12 @@ watch(
 	() => props.modelValue,
 	(isOpen) => {
 		if (isOpen) {
-			additionalDiscountEdited.value = false;
-			if (props.roundPayable) {
-				fillAdditionalDiscount(props.additionalDiscount);
-				return;
-			}
-			// Only sync when dialog opens, not continuously
-			localAdditionalDiscount.value = props.additionalDiscount || 0;
+			fillAdditionalDiscount(props.additionalDiscount);
 		}
 	}
 );
 
-/** Round Up Payable: show an amount in the field, as an amount or as % of the bill. */
+/** Show the bill's Additional Discount (an amount) in the field, as an amount or as % of the bill. */
 function fillAdditionalDiscount(amount) {
 	const value = Number(amount) || 0;
 	const base = discountBaseAmount.value;
@@ -3603,11 +3594,14 @@ function fillAdditionalDiscount(amount) {
 			: roundCurrency(value);
 }
 
-// Round Up Payable: offers can settle after the dialog opened; follow them until the cashier edits.
+// Offers and coupons can change while the dialog is open (e.g. one removed or applied again from
+// the Offers dialog on top of it): the field always shows the bill's actual discount. While the
+// cashier types, the bill takes the typed figure, so the two agree and the field is left alone.
 watch(
 	() => [props.roundPayable, props.additionalDiscount],
-	([roundPayable, amount]) => {
-		if (props.modelValue && roundPayable && !additionalDiscountEdited.value) {
+	([, amount]) => {
+		if (!props.modelValue) return;
+		if (Math.abs((Number(amount) || 0) - calculatedAdditionalDiscount.value) > 0.009) {
 			fillAdditionalDiscount(amount);
 		}
 	}
