@@ -25,6 +25,7 @@ FIELD_ALLOW_USER_TO_EDIT_RATE = "allow_user_to_edit_rate"
 FIELD_MAX_DISCOUNT_ALLOWED = "max_discount_allowed"
 FIELD_DISABLE_ROUNDED_TOTAL = "disable_rounded_total"
 FIELD_ALLOW_NEGATIVE_STOCK = "allow_negative_stock"
+FIELD_ROUND_UP_PAYABLE = "round_up_payable"
 ITEM_SKU_FIELD = "custom_sku"
 
 # Doctypes
@@ -704,6 +705,9 @@ def update_invoice(data):
 	try:
 		data = json.loads(data) if isinstance(data, str) else data
 		data = _strip_server_managed_fields(data)
+		# Round Up Payable: the client folded the bill's discount into discount_amount
+		# (see useInvoice.js). Not a Sales Invoice field, so it is taken off the payload.
+		round_up_payable = cint(data.pop(FIELD_ROUND_UP_PAYABLE, 0) or 0)
 
 		pos_profile = data.get("pos_profile")
 		doctype = data.get("doctype", "Sales Invoice")
@@ -796,7 +800,12 @@ def update_invoice(data):
 			pos_settings_cache = frappe.db.get_value(
 				DOCTYPE_POS_SETTINGS,
 				{"pos_profile": pos_profile},
-				[FIELD_ALLOW_USER_TO_EDIT_RATE, FIELD_MAX_DISCOUNT_ALLOWED, FIELD_ALLOW_NEGATIVE_STOCK],
+				[
+					FIELD_ALLOW_USER_TO_EDIT_RATE,
+					FIELD_MAX_DISCOUNT_ALLOWED,
+					FIELD_ALLOW_NEGATIVE_STOCK,
+					FIELD_ROUND_UP_PAYABLE,
+				],
 				as_dict=True,
 			)
 			# disable_rounded_total is on POS Profile, not POS Settings
@@ -923,6 +932,17 @@ def update_invoice(data):
 
 		if pos_settings_cache and pos_settings_cache.get(FIELD_DISABLE_ROUNDED_TOTAL) is not None:
 			disable_rounded = cint(pos_settings_cache.get(FIELD_DISABLE_ROUNDED_TOTAL))
+
+		# Round Up Payable: the payable is already a round figure. ERPNext's own rounding is
+		# switched on for this bill only to absorb a paisa left over when it spreads the
+		# discount over the lines, so the saved grand total matches what the cashier collected.
+		if (
+			round_up_payable
+			and pos_settings_cache
+			and cint(pos_settings_cache.get(FIELD_ROUND_UP_PAYABLE))
+			and flt(data.get("discount_amount"))
+		):
+			disable_rounded = 0
 
 		invoice_doc.disable_rounded_total = disable_rounded
 

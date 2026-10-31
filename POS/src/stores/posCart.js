@@ -112,10 +112,26 @@ export const usePOSCartStore = defineStore("posCart", () => {
 		computeLineTax,
 		rebuildIncrementalCache,
 		formatItemsForSubmission,
+		roundPayableActive,
+		billDiscount,
+		roundedBillDiscount,
+		manualBillDiscount,
+		fullPriceTotals,
+		setPayableRounding,
+		setManualBillDiscount,
+		displayLineAmount,
+		billDiscountFields,
 	} = useInvoice();
 
 	const offersStore = usePOSOffersStore();
 	const settingsStore = usePOSSettingsStore();
+
+	// Round Up Payable follows POS Settings (see useInvoice.js)
+	watch(
+		() => [settingsStore.roundUpPayable, settingsStore.payableRoundingStep],
+		([enabled, step]) => setPayableRounding({ enabled, step }),
+		{ immediate: true }
+	);
 
 	// Additional cart state
 	const pendingItem = ref(null);
@@ -1914,6 +1930,16 @@ export const usePOSCartStore = defineStore("posCart", () => {
 		applyOffersResource,
 		buildOfferEvaluationPayload,
 		formatItemsForSubmission,
+
+		// Round Up Payable
+		roundPayableActive,
+		billDiscount,
+		roundedBillDiscount,
+		manualBillDiscount,
+		fullPriceTotals,
+		setManualBillDiscount,
+		displayLineAmount,
+		billDiscountFields,
 
 		// Sales Order feature
 		targetDoctype,

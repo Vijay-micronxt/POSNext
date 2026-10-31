@@ -28,6 +28,10 @@ export function useInvoice() {
 	const posOpeningShift = ref(null); // POS Opening Shift name
 	const additionalDiscount = ref(0);
 	const couponCode = ref(null);
+	// Round Up Payable (POS Settings): see the "ROUND UP PAYABLE" block below.
+	const payableRounding = ref({ enabled: false, step: 10 });
+	// The cashier's own Additional Discount while Round Up Payable is on. Never recalculated.
+	const manualBillDiscount = ref(null);
 	const taxRules = ref([]); // Tax rules from POS Profile
 	const taxInclusive = ref(false); // Tax inclusive setting from POS Settings
 	// Item Tax Template -> rate + CGST/SGST style breakup, projected onto the POS
@@ -197,11 +201,11 @@ export function useInvoice() {
 	// ========================================================================
 	// Use roundCurrency for monetary totals to match ERPNext's currency precision (from System Settings)
 	const subtotal = computed(() => roundCurrency(_cachedSubtotal.value));
-	const totalTax = computed(() => roundCurrency(_cachedTotalTax.value));
-	const totalDiscount = computed(() =>
+	const itemTotalTax = computed(() => roundCurrency(_cachedTotalTax.value));
+	const itemTotalDiscount = computed(() =>
 		roundCurrency(_cachedTotalDiscount.value + (additionalDiscount.value || 0))
 	);
-	const grandTotal = computed(() => {
+	const discountedGrandTotal = computed(() => {
 		const discount = _cachedTotalDiscount.value + (additionalDiscount.value || 0);
 
 		if (taxInclusive.value) {
@@ -214,6 +218,115 @@ export function useInvoice() {
 			return roundCurrency(_cachedSubtotal.value + _cachedTotalTax.value - discount);
 		}
 	});
+
+	// ========================================================================
+	// ROUND UP PAYABLE (POS Settings switch)
+	// ========================================================================
+	// A bill with a discount (promotional offer, coupon) is paid in a round figure:
+	// the discounted payable is rounded UP to the next step and the discount is
+	// whatever is left. E.g. 300 with a 5% offer: 285 -> 290, discount 10 (3.33%).
+	//
+	// The whole discount then sits on the bill as Additional Discount (on the Grand
+	// Total) and the item lines are sold at full price, so the 5% is shown nowhere.
+	// The cashier may change the Additional Discount before payment; that figure is
+	// kept as it is (never rounded or recalculated) until the bill is cleared.
+	// A bill without a discount is left alone.
+	//
+	// Offers and coupons keep working on the item lines as before; only the totals,
+	// the display and the invoice sent to the server read the folded figures.
+	// ========================================================================
+
+	/** Full-price figures of a line: no discount, tax per its own template. */
+	function fullPriceLine(item) {
+		if (item.is_free_item) return { netAmount: 0, taxAmount: 0, grossAmount: 0 };
+		const isManuallyEdited = item.is_rate_manually_edited === 1;
+		const effectiveRate = isManuallyEdited ? item.rate : item.price_list_rate || item.rate;
+		const baseAmount = roundCurrency((item.quantity || 0) * roundCurrency(effectiveRate || 0));
+		return computeLineTax(item, baseAmount, 0);
+	}
+
+	const fullPriceTotals = computed(() => {
+		let gross = 0;
+		let tax = 0;
+		for (const item of invoiceItems.value) {
+			const line = fullPriceLine(item);
+			gross += line.grossAmount;
+			tax += line.taxAmount;
+		}
+		return { gross: roundCurrency(gross), tax: roundCurrency(tax) };
+	});
+
+	const roundPayableActive = computed(
+		() =>
+			Boolean(payableRounding.value.enabled) &&
+			invoiceItems.value.length > 0 &&
+			(manualBillDiscount.value !== null || itemTotalDiscount.value > 0)
+	);
+
+	/** The discount that makes the payable a round figure, before any change by the cashier. */
+	const roundedBillDiscount = computed(() => {
+		const step = Number(payableRounding.value.step) || 10;
+		const gross = fullPriceTotals.value.gross;
+		// small epsilon: 290.00 must stay 290, not jump to 300
+		const target = Math.ceil(roundCurrency(discountedGrandTotal.value) / step - 1e-9) * step;
+		return roundCurrency(Math.max(gross - Math.min(target, gross), 0));
+	});
+
+	/** Additional Discount of the bill while Round Up Payable is on. */
+	const billDiscount = computed(() => {
+		if (!roundPayableActive.value) return 0;
+		if (manualBillDiscount.value !== null) {
+			return roundCurrency(Math.min(Math.max(manualBillDiscount.value, 0), fullPriceTotals.value.gross));
+		}
+		return roundedBillDiscount.value;
+	});
+
+	const totalDiscount = computed(() =>
+		roundPayableActive.value ? billDiscount.value : itemTotalDiscount.value
+	);
+	const grandTotal = computed(() =>
+		roundPayableActive.value
+			? roundCurrency(fullPriceTotals.value.gross - billDiscount.value)
+			: discountedGrandTotal.value
+	);
+	const totalTax = computed(() => {
+		if (!roundPayableActive.value) return itemTotalTax.value;
+		const { gross, tax } = fullPriceTotals.value;
+		// Tax exclusive: the cart shows subtotal + tax - discount, so tax is the full-price tax
+		// (the discount on the Grand Total takes its share of tax with it).
+		if (!taxInclusive.value || gross <= 0) return tax;
+		// Tax inclusive: the bill-level discount reduces the tax in proportion.
+		return roundCurrency((tax * grandTotal.value) / gross);
+	});
+
+	function setPayableRounding({ enabled = false, step = 10 } = {}) {
+		payableRounding.value = { enabled: Boolean(enabled), step: Number(step) || 10 };
+	}
+
+	/** The cashier typed an Additional Discount: keep it as it is. null = back to the rounded figure. */
+	function setManualBillDiscount(amount) {
+		manualBillDiscount.value = amount === null || amount === undefined ? null : roundCurrency(Number(amount) || 0);
+	}
+
+	/** Line total to show in the cart: full price while Round Up Payable folds the discount. */
+	function displayLineAmount(item) {
+		if (roundPayableActive.value) return fullPriceLine(item).netAmount;
+		return item.amount || item.rate * item.quantity;
+	}
+
+	/** Invoice header fields for the bill's discount. */
+	function billDiscountFields() {
+		if (!roundPayableActive.value) return { discount_amount: additionalDiscount.value || 0 };
+		return {
+			discount_amount: billDiscount.value,
+			additional_discount_percentage: 0,
+			apply_discount_on: "Grand Total",
+			// Tells the server the payable is a round figure (lets it absorb a leftover paisa).
+			// Not when the cashier typed the discount: that payable need not be round.
+			round_up_payable: manualBillDiscount.value === null ? 1 : 0,
+		};
+	}
+
 	const totalPaid = computed(() => _cachedTotalPaid.value);
 
 	const remainingAmount = computed(() => {
@@ -845,28 +958,40 @@ export function useInvoice() {
 	 * @returns {Array} Items formatted for ERPNext Sales Invoice
 	 */
 	function formatItemsForSubmission(items) {
-		const mapRow = (item) => ({
-			item_code: item.item_code,
-			item_name: item.item_name,
-			qty: item.quantity || item.qty || 1,
-			rate: item.is_free_item ? 0 : computeBackendRate(item),
-			price_list_rate: item.is_free_item
-				? 0
-				: roundCurrency(item.price_list_rate || item.rate),
-			uom: item.uom,
-			warehouse: item.warehouse,
-			batch_no: item.batch_no,
-			serial_no: item.serial_no,
-			use_serial_batch_fields: item.batch_no || item.serial_no ? 1 : 0,
-			conversion_factor: item.conversion_factor || 1,
-			discount_percentage: roundCurrency(item.discount_percentage || 0),
-			discount_amount: roundCurrency(item.discount_amount || 0),
-			pricing_rules: stringifyPricingRules(item.pricing_rules),
-			// Manual rate edit tracking for audit logging
-			is_rate_manually_edited: item.is_rate_manually_edited || 0,
-			original_rate: item.original_rate || null,
-			is_free_item: item.is_free_item || 0,
-		});
+		// Round Up Payable: the discount goes on the bill, so the lines are sent at full price
+		// (their pricing rules still go along, so offers stay recorded as used).
+		const fold = roundPayableActive.value;
+		const mapRow = (item) => {
+			const full = fold && !item.is_free_item;
+			const effectiveRate =
+				item.is_rate_manually_edited === 1 ? item.rate : item.price_list_rate || item.rate;
+			return {
+				item_code: item.item_code,
+				item_name: item.item_name,
+				qty: item.quantity || item.qty || 1,
+				rate: item.is_free_item
+					? 0
+					: full
+						? roundCurrency(effectiveRate)
+						: computeBackendRate(item),
+				price_list_rate: item.is_free_item
+					? 0
+					: roundCurrency(item.price_list_rate || item.rate),
+				uom: item.uom,
+				warehouse: item.warehouse,
+				batch_no: item.batch_no,
+				serial_no: item.serial_no,
+				use_serial_batch_fields: item.batch_no || item.serial_no ? 1 : 0,
+				conversion_factor: item.conversion_factor || 1,
+				discount_percentage: full ? 0 : roundCurrency(item.discount_percentage || 0),
+				discount_amount: full ? 0 : roundCurrency(item.discount_amount || 0),
+				pricing_rules: stringifyPricingRules(item.pricing_rules),
+				// Manual rate edit tracking for audit logging
+				is_rate_manually_edited: item.is_rate_manually_edited || 0,
+				original_rate: item.original_rate || null,
+				is_free_item: item.is_free_item || 0,
+			};
+		};
 
 		const out = [];
 		for (const item of items) {
@@ -1052,7 +1177,7 @@ export function useInvoice() {
 			customer: customer.value?.name || customer.value,
 			items: formatItemsForSubmission(rawItems),
 			payments: invoicePayments,
-			discount_amount: additionalDiscount.value || 0,
+			...billDiscountFields(),
 			coupon_code: couponCode.value,
 			is_pos: 1,
 			update_stock: 1,
@@ -1115,7 +1240,7 @@ export function useInvoice() {
 					customer: customer.value?.name || customer.value,
 					items: formatItemsForSubmission(rawItems),
 					payments: invoicePayments,
-					discount_amount: additionalDiscount.value || 0,
+					...billDiscountFields(),
 					coupon_code: couponCode.value,
 					is_pos: 1,
 					update_stock: 1, // Critical: Ensures stock is updated
@@ -1280,6 +1405,7 @@ export function useInvoice() {
 		payments.value = [];
 		additionalDiscount.value = 0;
 		couponCode.value = null;
+		manualBillDiscount.value = null;
 
 		// Reset incremental cache
 		_cachedSubtotal.value = 0;
@@ -1307,6 +1433,7 @@ export function useInvoice() {
 		payments.value = [];
 		additionalDiscount.value = 0;
 		couponCode.value = null;
+		manualBillDiscount.value = null;
 
 		// Reset incremental cache
 		_cachedSubtotal.value = 0;
@@ -1406,6 +1533,17 @@ export function useInvoice() {
 		totalDiscount,
 		grandTotal,
 		totalPaid,
+		// Round Up Payable
+		payableRounding,
+		manualBillDiscount,
+		roundPayableActive,
+		billDiscount,
+		roundedBillDiscount,
+		fullPriceTotals,
+		setPayableRounding,
+		setManualBillDiscount,
+		displayLineAmount,
+		billDiscountFields,
 		remainingAmount,
 		canSubmit,
 

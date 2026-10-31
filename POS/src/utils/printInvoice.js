@@ -1,5 +1,6 @@
 import { call } from "@/utils/apiWrapper";
 import { logger } from "@/utils/logger";
+import { usePOSSettingsStore } from "@/stores/posSettings";
 import { getOfflineReceiptPayload } from "@/utils/offline/offlineReceiptCache";
 import { getOfflineInvoiceByOfflineId } from "@/utils/offline/sync";
 import { offlineWorker } from "@/utils/offline/workerClient";
@@ -12,6 +13,23 @@ const DEFAULT_PRINT_FORMAT = "POS Next Receipt";
 // ============================================================================
 // Shared helpers
 // ============================================================================
+
+/**
+ * Round Up Payable (POS Settings): the bill's discount is an amount (a percentage would make
+ * ERPNext recalculate it), so the receipt shows the percentage it works out to, e.g. " (3.33%)".
+ */
+function roundUpPayablePercent(invoiceData) {
+	let enabled = false;
+	try {
+		enabled = usePOSSettingsStore().roundUpPayable;
+	} catch {
+		enabled = false; // no active store (e.g. printing outside the POS screen)
+	}
+	const discount = Math.abs(Number.parseFloat(invoiceData.discount_amount) || 0);
+	const before = (Number.parseFloat(invoiceData.grand_total) || 0) + discount;
+	if (!enabled || !discount || before <= 0) return "";
+	return ` (${((discount * 100) / before).toFixed(2)}%)`;
+}
 
 function formatCurrency(amount) {
 	return Number.parseFloat(amount || 0).toFixed(2);
@@ -258,7 +276,7 @@ export function buildReceiptHTML(invoiceData) {
 							? ` (${Number(invoiceData.additional_discount_percentage).toFixed(
 									1
 							  )}%)`
-							: ""
+							: roundUpPayablePercent(invoiceData)
 					}:</span><span>-${formatCurrency(
 									Math.abs(invoiceData.discount_amount)
 							  )}</span></div>`

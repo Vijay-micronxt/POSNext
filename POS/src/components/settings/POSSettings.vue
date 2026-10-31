@@ -670,6 +670,24 @@
 													__('Show exact totals without rounding')
 												"
 											/>
+											<CheckboxField
+												v-model="settings.round_up_payable"
+												:label="__('Round Up Payable')"
+												:description="
+													__(
+														'A bill with an offer or coupon discount is paid in a round figure: the payable is rounded up and the discount left is shown as Additional Discount, which the cashier can still change.'
+													)
+												"
+											/>
+											<SelectField
+												v-if="settings.round_up_payable"
+												v-model="settings.payable_rounding_step"
+												:label="__('Round Up To')"
+												:options="payableRoundingStepOptions"
+												:description="
+													__('E.g. 10: a payable of 285 becomes 290.')
+												"
+											/>
 										</div>
 									</div>
 
@@ -1190,6 +1208,8 @@ const settings = ref({
 	allow_user_to_edit_item_discount: 1,
 	allow_user_to_edit_rate: 0,
 	disable_rounded_total: 1,
+	round_up_payable: 0,
+	payable_rounding_step: "10",
 	allow_credit_sale: 0,
 	allow_return: 0,
 	allow_write_off_change: 0,
@@ -1229,6 +1249,8 @@ const {
 } = useQzTray();
 
 // Warehouse options
+const payableRoundingStepOptions = ["1", "5", "10", "50", "100"].map((v) => ({ label: v, value: v }));
+
 const warehouseOptions = computed(() => {
 	if (warehousesList.value.length === 0) return [];
 	return warehousesList.value.map((w) => ({
