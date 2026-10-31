@@ -2864,14 +2864,42 @@ function logoutWithCloseShift() {
 	uiStore.showCloseShiftDialog = true;
 }
 
-async function handleSaveDraft() {
+/**
+ * Hold the cart as a draft. On an RFID counter the bill's basket is held too (or, when the server
+ * cannot hold one, its tags are kept in the draft), so resuming does not ask for the tags again.
+ * Returns the saved draft, or null when nothing was held (the cart is left as it was).
+ */
+async function holdCart() {
+	const rfid = rfidStore.holdState();
+	if (rfid && offlineStore.isOffline) {
+		showWarning(__("RFID counter needs a connection to hold this bill"));
+		return null;
+	}
+	try {
+		await rfidStore.hold(rfid);
+	} catch (error) {
+		showError(parseError(error).message || __("Could not hold the RFID basket. Try again."));
+		return null;
+	}
 	const savedDraft = await draftsStore.saveDraftInvoice(
 		cartStore.invoiceItems,
 		cartStore.customer,
 		cartStore.posProfile,
 		cartStore.appliedOffers,
-		cartStore.currentDraftId
+		cartStore.currentDraftId,
+		rfid
 	);
+	if (!savedDraft) {
+		await rfidStore.undoHold(rfid).catch((error) => log.error("Could not undo RFID hold", error));
+		return null;
+	}
+	// Forgets the held units before the cart is cleared, so the tray does not take them off their basket.
+	await rfidStore.finishHold(rfid).catch((error) => log.error("Could not start next RFID basket", error));
+	return savedDraft;
+}
+
+async function handleSaveDraft() {
+	const savedDraft = await holdCart();
 	if (savedDraft) {
 		cartStore.clearCart();
 		// Reset cart hash when cart is saved as draft and cleared
@@ -2883,13 +2911,7 @@ async function handleLoadDraft(draft) {
 	try {
 		// If current cart has items, save it as draft before loading new one
 		if (!cartStore.isEmpty) {
-			const saved = await draftsStore.saveDraftInvoice(
-				cartStore.invoiceItems,
-				cartStore.customer,
-				cartStore.posProfile,
-				cartStore.appliedOffers,
-				cartStore.currentDraftId
-			);
+			const saved = await holdCart();
 
 			if (!saved) {
 				showError(
@@ -2910,6 +2932,9 @@ async function handleLoadDraft(draft) {
 		// Rebuild incremental cache to recalculate totals
 		cartStore.rebuildIncrementalCache();
 
+		// RFID counter: bring the held bill's tray back, after its items are in the cart
+		if (draftData.rfid) await restoreRfidTray(draftData.rfid);
+
 		// Restore applied offers if they were saved
 		if (draftData.applied_offers && draftData.applied_offers.length > 0) {
 			cartStore.appliedOffers = draftData.applied_offers;
@@ -2923,6 +2948,22 @@ async function handleLoadDraft(draft) {
 		uiStore.showDraftDialog = false;
 	} catch (error) {
 		log.error("Error loading draft:", error);
+	}
+}
+
+async function restoreRfidTray(state) {
+	try {
+		const { missing, events } = await rfidStore.restore(state);
+		const problem = events.find((e) => e.level === "error");
+		if (missing) {
+			showWarning(
+				__("{0} piece(s) of this bill could not be put back on the RFID tray. Read them on the tray again.", [missing])
+					+ (problem ? " " + problem.message : "")
+			);
+		}
+	} catch (error) {
+		log.error("Could not restore the RFID tray of a held bill", error);
+		showWarning(__("The RFID tray of this bill could not be restored. Read its pieces on the tray again."));
 	}
 }
 
