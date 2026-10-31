@@ -140,6 +140,11 @@ export const usePOSCartStore = defineStore("posCart", () => {
 	// Offers the cashier removed from this bill: automatic offer processing skips them until
 	// they are applied again by hand or the bill is cleared.
 	const declinedOffers = ref([]);
+	// The part of additionalDiscount a whole-bill (apply_on=Transaction) offer put there; the rest
+	// is a coupon's or the cashier's. Offers are evaluated without it, or the server would hand an
+	// offer's own discount back as if it were a coupon's (a removed offer's discount stayed, and
+	// applying it again looked like "no change", so it was rolled back).
+	const offerHeaderDiscount = ref(0);
 	const appliedCoupon = ref(null);
 	const selectionMode = ref("uom"); // 'uom' or 'variant'
 	const currentDraftId = ref(null);
@@ -262,6 +267,7 @@ export const usePOSCartStore = defineStore("posCart", () => {
 		offersStore.clearOneTimeContext();
 		appliedOffers.value = [];
 		declinedOffers.value = [];
+		offerHeaderDiscount.value = 0;
 		appliedCoupon.value = null;
 		currentDraftId.value = null;
 		targetDoctype.value = "Sales Invoice";
@@ -359,6 +365,7 @@ export const usePOSCartStore = defineStore("posCart", () => {
 
 	// Discount & Offer Management
 	function applyDiscountToCart(discount) {
+		offerHeaderDiscount.value = 0; // the coupon's amount replaces the whole header discount
 		applyDiscount(discount);
 		appliedCoupon.value = discount;
 		showSuccess(__("{0} applied successfully", [discount.name]));
@@ -366,6 +373,7 @@ export const usePOSCartStore = defineStore("posCart", () => {
 
 	function removeDiscountFromCart() {
 		appliedOffers.value = [];
+		offerHeaderDiscount.value = 0;
 		removeDiscount();
 		appliedCoupon.value = null;
 		showSuccess(__("Discount has been removed from cart"));
@@ -382,7 +390,7 @@ export const usePOSCartStore = defineStore("posCart", () => {
 			company: currentProfile?.company,
 			selling_price_list: currentProfile?.selling_price_list,
 			currency: currentProfile?.currency,
-			discount_amount: additionalDiscount.value || 0,
+			discount_amount: nonOfferHeaderDiscount(),
 			coupon_code: appliedCoupon.value?.name || "",
 			items: rawItems.map((item) => ({
 				item_code: item.item_code,
@@ -550,14 +558,31 @@ export const usePOSCartStore = defineStore("posCart", () => {
 	 * rule applies on the current cart).
 	 */
 	function applyHeaderDiscountFromServer(headerDiscount) {
+		const base = nonOfferHeaderDiscount();
 		if (!headerDiscount) {
-			additionalDiscount.value = 0;
+			// No whole-bill offer any more: keep a coupon's / the cashier's discount
+			additionalDiscount.value = base;
+			offerHeaderDiscount.value = 0;
 			rebuildIncrementalCache();
 			return;
 		}
 
 		const amount = Number.parseFloat(headerDiscount.discountAmount) || 0;
 		additionalDiscount.value = amount;
+		// The server sends back the discount it was given unless a whole-bill offer set its own
+		offerHeaderDiscount.value = Math.abs(amount - base) > 0.005 ? amount : 0;
+		rebuildIncrementalCache();
+	}
+
+	/** Header discount that is not a whole-bill offer's (a coupon's or the cashier's). */
+	function nonOfferHeaderDiscount() {
+		return Math.max((Number(additionalDiscount.value) || 0) - (offerHeaderDiscount.value || 0), 0);
+	}
+
+	/** The cashier set Additional Discount by hand: it is the whole header discount now. */
+	function setAdditionalDiscount(amount) {
+		offerHeaderDiscount.value = 0;
+		additionalDiscount.value = Number(amount) || 0;
 		rebuildIncrementalCache();
 	}
 
@@ -739,7 +764,7 @@ export const usePOSCartStore = defineStore("posCart", () => {
 		appliedOffers.value = [];
 		processFreeItems([]);
 		stripOfferFromItems();
-		if (!appliedCoupon.value) applyHeaderDiscountFromServer(null);
+		applyHeaderDiscountFromServer(null); // keeps a coupon's discount
 		rebuildIncrementalCache();
 	}
 
@@ -1969,6 +1994,7 @@ export const usePOSCartStore = defineStore("posCart", () => {
 
 		// Offers removed by the cashier on this bill
 		declinedOffers,
+		setAdditionalDiscount,
 
 		// Round Up Payable
 		roundPayableActive,

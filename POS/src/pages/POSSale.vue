@@ -2381,11 +2381,8 @@ function handleAdditionalDiscountUpdate(discountAmount) {
 		return;
 	}
 
-	// Update the additional discount value in the cart store
-	cartStore.additionalDiscount = discountAmount;
-
-	// Rebuild the cache to recalculate totals
-	cartStore.rebuildIncrementalCache();
+	// The cashier's figure is the whole bill discount now (replaces an offer's)
+	cartStore.setAdditionalDiscount(discountAmount);
 }
 
 function handleCustomerSelected(selectedCustomer) {
