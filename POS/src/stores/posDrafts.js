@@ -43,7 +43,8 @@ export const usePOSDraftsStore = defineStore("posDrafts", () => {
 		posProfile,
 		appliedOffers = [],
 		draftId = null,
-		rfid = null
+		rfid = null,
+		declinedOffers = []
 	) {
 		if (invoiceItems.length === 0) {
 			showWarning(__("Cannot save an empty cart as draft"));
@@ -58,6 +59,8 @@ export const usePOSDraftsStore = defineStore("posDrafts", () => {
 				applied_offers: appliedOffers, // Save applied offers
 				// RFID counter: the held basket and the tags read, to get the tray back on resume
 				rfid,
+				// Offers the cashier removed from this bill stay removed on resume
+				declined_offers: declinedOffers,
 			};
 
 			let savedDraft;
@@ -88,6 +91,7 @@ export const usePOSDraftsStore = defineStore("posDrafts", () => {
 				customer: draft.customer,
 				applied_offers: draft.applied_offers || [], // Restore applied offers
 				rfid: draft.rfid || null,
+				declined_offers: draft.declined_offers || [],
 			};
 		} catch (error) {
 			console.error("Error loading draft:", error);
