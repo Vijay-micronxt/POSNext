@@ -578,6 +578,7 @@
 				:company="shiftStore.profileCompany"
 				:currency="shiftStore.profileCurrency"
 				:applied-offers="cartStore.appliedOffers"
+				:declined-offers="cartStore.declinedOffers"
 				@apply-offer="handleApplyOffer"
 				@remove-offer="
 					(offer) =>
@@ -2905,7 +2906,8 @@ async function holdCart() {
 		cartStore.posProfile,
 		cartStore.appliedOffers,
 		cartStore.currentDraftId,
-		rfid
+		rfid,
+		cartStore.declinedOffers
 	);
 	if (!savedDraft) {
 		await rfidStore.undoHold(rfid).catch((error) => log.error("Could not undo RFID hold", error));
@@ -2944,6 +2946,7 @@ async function handleLoadDraft(draft) {
 
 		const draftData = await draftsStore.loadDraft(draft);
 		cartStore.setManualBillDiscount(null); // a discount typed on the bill on screen is not this bill's
+		cartStore.declinedOffers = draftData.declined_offers; // before offers are processed again
 		cartStore.invoiceItems = draftData.items;
 		cartStore.setCustomer(draftData.customer);
 		cartStore.currentDraftId = draft.draft_id; // Set current draft ID

@@ -267,20 +267,44 @@
 								</p>
 							</div>
 
-							<!-- Offer Status - Auto-applied/removed based on cart -->
+							<!-- Offer Status - applied automatically; the cashier may remove one from this bill -->
 							<div class="mt-3">
-								<div
-									v-if="isOfferApplied(offer)"
-									class="w-full py-2 px-4 rounded-lg font-semibold text-sm bg-green-100 text-green-800 border border-green-300 flex items-center justify-center gap-2"
-								>
-									<svg class="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
-										<path
-											fill-rule="evenodd"
-											d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z"
-											clip-rule="evenodd"
-										/>
-									</svg>
-									{{ __("Applied") }}
+								<div v-if="isOfferApplied(offer)" class="flex gap-2">
+									<div
+										class="flex-1 py-2 px-4 rounded-lg font-semibold text-sm bg-green-100 text-green-800 border border-green-300 flex items-center justify-center gap-2"
+									>
+										<svg class="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
+											<path
+												fill-rule="evenodd"
+												d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z"
+												clip-rule="evenodd"
+											/>
+										</svg>
+										{{ __("Applied") }}
+									</div>
+									<button
+										type="button"
+										class="py-2 px-4 rounded-lg font-semibold text-sm bg-white text-red-600 border border-red-300 hover:bg-red-50 disabled:opacity-50"
+										:disabled="!!busyOffer"
+										@click="removeOffer(offer)"
+									>
+										{{ busyOffer === offer.name ? __("Removing...") : __("Remove") }}
+									</button>
+								</div>
+								<div v-else-if="isOfferDeclined(offer)" class="flex gap-2">
+									<div
+										class="flex-1 py-2 px-4 rounded-lg font-semibold text-sm bg-gray-100 text-gray-600 border border-gray-300 flex items-center justify-center"
+									>
+										{{ __("Removed from this bill") }}
+									</div>
+									<button
+										type="button"
+										class="py-2 px-4 rounded-lg font-semibold text-sm bg-white text-green-700 border border-green-400 hover:bg-green-50 disabled:opacity-50"
+										:disabled="!!busyOffer"
+										@click="applyOfferAgain(offer)"
+									>
+										{{ busyOffer === offer.name ? __("Applying...") : __("Apply again") }}
+									</button>
 								</div>
 								<div
 									v-else
@@ -349,9 +373,35 @@ const props = defineProps({
 		type: Array,
 		default: () => [],
 	},
+	/** Codes of offers the cashier removed from this bill. */
+	declinedOffers: {
+		type: Array,
+		default: () => [],
+	},
 });
 
-const emit = defineEmits(["update:modelValue"]);
+const emit = defineEmits(["update:modelValue", "apply-offer", "remove-offer"]);
+
+// Offer being removed / applied again; the cart store calls resetApplyingState when done
+const busyOffer = ref(null);
+
+function removeOffer(offer) {
+	if (busyOffer.value) return;
+	busyOffer.value = offer.name;
+	emit("remove-offer", offer);
+}
+
+function applyOfferAgain(offer) {
+	if (busyOffer.value) return;
+	busyOffer.value = offer.name;
+	emit("apply-offer", offer);
+}
+
+function resetApplyingState() {
+	busyOffer.value = null;
+}
+
+defineExpose({ resetApplyingState });
 
 const show = ref(props.modelValue);
 const appliedOfferCodes = computed(() => {
@@ -370,6 +420,7 @@ watch(
 	() => props.modelValue,
 	(val) => {
 		show.value = val;
+		if (val) busyOffer.value = null;
 		// No need to load offers - they're already in the store
 	}
 );
@@ -380,6 +431,10 @@ watch(show, (val) => {
 
 function isOfferApplied(offer) {
 	return appliedOfferCodes.value.has(offer?.name);
+}
+
+function isOfferDeclined(offer) {
+	return (props.declinedOffers || []).includes(offer?.name);
 }
 
 function formatCurrency(amount) {

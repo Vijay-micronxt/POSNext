@@ -29,7 +29,7 @@ from frappe import _
 from frappe.query_builder import DocType
 from frappe.query_builder.functions import Coalesce
 
-from pos_next.api.constants import DEFAULT_POS_SETTINGS, POS_SETTINGS_FIELDS
+from pos_next.api.constants import DEFAULT_POS_SETTINGS, POS_SETTINGS_FIELDS, get_pos_settings_values
 
 
 @frappe.whitelist()
@@ -208,11 +208,8 @@ def _get_pos_settings(pos_profile_doc):
 	"""
 	try:
 		settings = (
-			frappe.db.get_value(
-				"POS Settings",
-				{"pos_profile": pos_profile_doc.name, "enabled": 1},
-				POS_SETTINGS_FIELDS,
-				as_dict=True,
+			get_pos_settings_values(
+				{"pos_profile": pos_profile_doc.name, "enabled": 1}, POS_SETTINGS_FIELDS
 			)
 			or DEFAULT_POS_SETTINGS.copy()
 		)

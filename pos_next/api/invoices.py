@@ -12,6 +12,8 @@ from erpnext.stock.doctype.batch.batch import get_batch_no, get_batch_qty
 from frappe import _
 from frappe.utils import cint, cstr, flt, get_datetime, nowdate, nowtime
 
+from pos_next.api.constants import get_pos_settings_values
+
 # ==========================================
 # Constants for field names (avoid typos and enable refactoring)
 # ==========================================
@@ -797,8 +799,8 @@ def update_invoice(data):
 		# ========================================================================
 		pos_settings_cache = None
 		if pos_profile:
-			pos_settings_cache = frappe.db.get_value(
-				DOCTYPE_POS_SETTINGS,
+			# Tolerates a column not migrated yet (it takes its default) instead of failing the bill
+			pos_settings_cache = get_pos_settings_values(
 				{"pos_profile": pos_profile},
 				[
 					FIELD_ALLOW_USER_TO_EDIT_RATE,
@@ -806,7 +808,6 @@ def update_invoice(data):
 					FIELD_ALLOW_NEGATIVE_STOCK,
 					FIELD_ROUND_UP_PAYABLE,
 				],
-				as_dict=True,
 			)
 			# disable_rounded_total is on POS Profile, not POS Settings
 			pos_profile_rounded = frappe.db.get_value(

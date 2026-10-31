@@ -137,6 +137,9 @@ export const usePOSCartStore = defineStore("posCart", () => {
 	const pendingItem = ref(null);
 	const pendingItemQty = ref(1);
 	const appliedOffers = ref([]);
+	// Offers the cashier removed from this bill: automatic offer processing skips them until
+	// they are applied again by hand or the bill is cleared.
+	const declinedOffers = ref([]);
 	const appliedCoupon = ref(null);
 	const selectionMode = ref("uom"); // 'uom' or 'variant'
 	const currentDraftId = ref(null);
@@ -258,6 +261,7 @@ export const usePOSCartStore = defineStore("posCart", () => {
 		customer.value = null;
 		offersStore.clearOneTimeContext();
 		appliedOffers.value = [];
+		declinedOffers.value = [];
 		appliedCoupon.value = null;
 		currentDraftId.value = null;
 		targetDoctype.value = "Sales Invoice";
@@ -575,13 +579,15 @@ export const usePOSCartStore = defineStore("posCart", () => {
 	async function applyOffer(offer, currentProfile, offersDialogRef = null) {
 		if (!offer) {
 			console.error("No offer provided");
-			offersDialogRef?.resetApplyingState();
+			offersDialogRef?.resetApplyingState?.();
 			return false;
 		}
 
 		const offerCode = offer.name;
 		const existingCodes = getAppliedOfferCodes();
 		const alreadyApplied = existingCodes.includes(offerCode);
+		// Applied again by hand: automatic processing may keep it from now on
+		if (!alreadyApplied) declinedOffers.value = declinedOffers.value.filter((c) => c !== offerCode);
 
 		if (alreadyApplied) {
 			return await removeOffer(offerCode, currentProfile, offersDialogRef);
@@ -589,7 +595,7 @@ export const usePOSCartStore = defineStore("posCart", () => {
 
 		if (!posProfile.value || invoiceItems.value.length === 0) {
 			showWarning(__("Add items to the cart before applying an offer."));
-			offersDialogRef?.resetApplyingState();
+			offersDialogRef?.resetApplyingState?.();
 			return false;
 		}
 
@@ -657,7 +663,7 @@ export const usePOSCartStore = defineStore("posCart", () => {
 					}
 
 					showWarning(__("Your cart doesn't meet the requirements for this offer."));
-					offersDialogRef?.resetApplyingState();
+					offersDialogRef?.resetApplyingState?.();
 					result = false;
 					return;
 				}
@@ -696,7 +702,7 @@ export const usePOSCartStore = defineStore("posCart", () => {
 				console.error("Error applying offer:", error);
 				offerProcessingState.value.error = error.message;
 				showError(__("Failed to apply offer. Please try again."));
-				offersDialogRef?.resetApplyingState();
+				offersDialogRef?.resetApplyingState?.();
 				result = false;
 			} finally {
 				offerProcessingState.value.isProcessing = false;
@@ -706,40 +712,66 @@ export const usePOSCartStore = defineStore("posCart", () => {
 		return result;
 	}
 
+	/**
+	 * Take an offer's discount off the cart lines it was on (all offers when no code). The server
+	 * leaves a line it no longer discounts untouched, so the old discount must go first.
+	 */
+	function stripOfferFromItems(offerCode = null) {
+		for (const item of invoiceItems.value) {
+			if (item.is_free_item) continue;
+			const rules = Array.isArray(item.pricing_rules)
+				? item.pricing_rules
+				: String(item.pricing_rules || "")
+						.split(",")
+						.map((r) => r.trim())
+						.filter(Boolean);
+			if (!rules.length || (offerCode && !rules.includes(offerCode))) continue;
+			item.discount_percentage = 0;
+			item.discount_amount = 0;
+			item.pricing_rules = [];
+			recalculateItem(item);
+		}
+	}
+
+	/** Nothing is left of the offers: clear their discounts, but keep a coupon the cashier applied. */
+	function clearAllOffersFromCart() {
+		offerQueue.cancel();
+		appliedOffers.value = [];
+		processFreeItems([]);
+		stripOfferFromItems();
+		if (!appliedCoupon.value) applyHeaderDiscountFromServer(null);
+		rebuildIncrementalCache();
+	}
+
+	/**
+	 * The cashier removed an offer from the bill. It stays off this bill: automatic offer
+	 * processing skips it until it is applied again by hand or the bill is cleared.
+	 */
 	async function removeOffer(offer, currentProfile = null, offersDialogRef = null) {
 		const offerCode = typeof offer === "string" ? offer : offer?.name || offer?.code;
 
 		// Cancel any pending auto-processing
 		debouncedProcessOffers.cancel();
 
-		if (!offerCode) {
-			// Remove all offers - immediate operation, no queue needed
-			offerQueue.cancel();
+		const declined = offerCode ? [offerCode] : appliedOffers.value.map((entry) => entry.code);
+		declinedOffers.value = [...new Set([...declinedOffers.value, ...declined])];
 
-			appliedOffers.value = [];
-			processFreeItems([]); // Remove all free items
-			removeDiscount();
-			await nextTick();
-			showSuccess(__("Offer has been removed from cart"));
-			offersDialogRef?.resetApplyingState();
-			return true;
-		}
-
-		const remainingOffers = appliedOffers.value.filter((entry) => entry.code !== offerCode);
+		const remainingOffers = offerCode
+			? appliedOffers.value.filter((entry) => entry.code !== offerCode)
+			: [];
 		const remainingCodes = remainingOffers.map((entry) => entry.code);
 
 		if (remainingCodes.length === 0) {
-			// All offers removed - immediate operation
-			offerQueue.cancel();
-
-			appliedOffers.value = [];
-			processFreeItems([]); // Remove all free items
-			removeDiscount();
+			// All offers removed - immediate operation, no server call needed
+			clearAllOffersFromCart();
 			await nextTick();
 			showSuccess(__("Offer has been removed from cart"));
-			offersDialogRef?.resetApplyingState();
+			offersDialogRef?.resetApplyingState?.();
 			return true;
 		}
+
+		stripOfferFromItems(offerCode);
+		rebuildIncrementalCache();
 
 		let result = false;
 
@@ -779,14 +811,14 @@ export const usePOSCartStore = defineStore("posCart", () => {
 
 				await nextTick();
 				showSuccess(__("Offer has been removed from cart"));
-				offersDialogRef?.resetApplyingState();
+				offersDialogRef?.resetApplyingState?.();
 				result = true;
 			} catch (error) {
 				if (signal?.aborted) return;
 				console.error("Error removing offer:", error);
 				offerProcessingState.value.error = error.message;
 				showError(__("Failed to update cart after removing offer."));
-				offersDialogRef?.resetApplyingState();
+				offersDialogRef?.resetApplyingState?.();
 				result = false;
 			} finally {
 				offerProcessingState.value.isProcessing = false;
@@ -952,7 +984,10 @@ export const usePOSCartStore = defineStore("posCart", () => {
 
 			// Find new offers to apply (both price and product discounts)
 			const appliedOfferCodes = new Set(appliedOffers.value.map((o) => o.code));
-			const newOffers = eligibleOffers.filter((offer) => !appliedOfferCodes.has(offer.name));
+			const declined = new Set(declinedOffers.value);
+			const newOffers = eligibleOffers.filter(
+				(offer) => !appliedOfferCodes.has(offer.name) && !declined.has(offer.name)
+			);
 
 			if (newOffers.length === 0) {
 				return;
@@ -1600,8 +1635,9 @@ export const usePOSCartStore = defineStore("posCart", () => {
 			// 2. Identify new eligible offers to apply (client-side check)
 			const allEligibleOffers = offersStore.allEligibleOffers;
 			const currentAppliedCodes = new Set(appliedOffers.value.map((o) => o.code));
+			const declined = new Set(declinedOffers.value);
 			const newOffers = allEligibleOffers.filter(
-				(offer) => !currentAppliedCodes.has(offer.name)
+				(offer) => !currentAppliedCodes.has(offer.name) && !declined.has(offer.name)
 			);
 
 			// 3. Determine if we need to call the server
@@ -1930,6 +1966,9 @@ export const usePOSCartStore = defineStore("posCart", () => {
 		applyOffersResource,
 		buildOfferEvaluationPayload,
 		formatItemsForSubmission,
+
+		// Offers removed by the cashier on this bill
+		declinedOffers,
 
 		// Round Up Payable
 		roundPayableActive,
