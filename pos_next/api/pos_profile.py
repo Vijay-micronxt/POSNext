@@ -69,15 +69,15 @@ def get_pos_profile_data(pos_profile):
 @frappe.whitelist()
 def get_pos_settings(pos_profile):
 	"""Get POS Settings for a given POS Profile"""
-	from pos_next.api.constants import DEFAULT_POS_SETTINGS, POS_SETTINGS_FIELDS
+	from pos_next.api.constants import DEFAULT_POS_SETTINGS, POS_SETTINGS_FIELDS, get_pos_settings_values
 
 	if not pos_profile:
 		return DEFAULT_POS_SETTINGS.copy()
 
 	try:
 		# Get POS Settings linked to this POS Profile
-		pos_settings = frappe.db.get_value(
-			"POS Settings", {"pos_profile": pos_profile, "enabled": 1}, POS_SETTINGS_FIELDS, as_dict=True
+		pos_settings = get_pos_settings_values(
+			{"pos_profile": pos_profile, "enabled": 1}, POS_SETTINGS_FIELDS
 		)
 
 		if not pos_settings:

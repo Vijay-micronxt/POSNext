@@ -76,3 +76,38 @@ DEFAULT_POS_SETTINGS = {
 	"show_variants_as_items": 0,
 	"display_item_sku": 0,
 }
+
+
+def get_pos_settings_values(filters, fields=None):
+	"""Read POS Settings fields for one record, tolerating columns not created yet.
+
+	A field added in code exists in the database only after ``bench migrate``. Asking
+	for it before then fails the whole query ("Unknown column"), and callers used to
+	fall back to DEFAULT_POS_SETTINGS for every field - e.g. tax_inclusive dropped
+	to 0 and the POS added tax to tax-inclusive prices. Here only existing columns
+	are read; a missing one takes its default and a warning is logged.
+
+	Args:
+		filters: filters or name of the POS Settings record
+		fields: fields to read (default: POS_SETTINGS_FIELDS)
+
+	Returns:
+		frappe._dict with every requested field, or None when there is no record.
+	"""
+	import frappe
+
+	fields = list(fields or POS_SETTINGS_FIELDS)
+	present = [f for f in fields if f == "name" or frappe.db.has_column("POS Settings", f)]
+	missing = [f for f in fields if f not in present]
+	if missing:
+		frappe.logger("pos_next").warning(
+			"POS Settings columns missing (run bench migrate): %s", ", ".join(missing)
+		)
+
+	row = frappe.db.get_value("POS Settings", filters, present, as_dict=True) if present else None
+	if not row:
+		return None
+	for field in missing:
+		row[field] = DEFAULT_POS_SETTINGS.get(field)
+	return row
+
