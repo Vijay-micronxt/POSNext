@@ -711,18 +711,28 @@
 						</p>
 						<p class="text-gray-600">
 							{{
-								__("If the customer's piece has a tag, put it on the RFID tray instead. Add by hand only for a piece without a tag.")
+								__("If the customer's piece has a tag, put it on the RFID tray instead. Add by hand only for a piece without a tag. Every piece sold by hand is recorded with this bill and your name.")
 							}}
 						</p>
 					</div>
 				</template>
 				<template #actions>
-					<div class="flex gap-2 w-full">
-						<Button class="flex-1" variant="subtle" @click="answerRfidManualPrompt(false)">
-							{{ __("Scan the tag") }}
-						</Button>
-						<Button class="flex-1" variant="solid" @click="answerRfidManualPrompt(true)">
-							{{ __("Piece has no tag - add") }}
+					<div class="flex flex-col gap-2 w-full">
+						<div class="flex gap-2 w-full">
+							<Button class="flex-1" variant="subtle" @click="answerRfidManualPrompt(false)">
+								{{ __("Scan the tag") }}
+							</Button>
+							<Button class="flex-1" variant="solid" @click="answerRfidManualPrompt(true)">
+								{{ __("Piece has no tag - add") }}
+							</Button>
+						</div>
+						<Button
+							v-if="rfidStore.unreadSale"
+							class="w-full"
+							variant="outline"
+							@click="answerRfidManualPrompt('unread')"
+						>
+							{{ __("It has a tag, but the tag will not read") }}
 						</Button>
 					</div>
 				</template>
@@ -2064,12 +2074,14 @@ async function rfidManualAddAllowed(item) {
 		return false;
 	}
 	if (rfidStore.unread[item.item_code]) return true; // approved on this bill already
-	if (handPicked > 0) return true; // already confirmed for this bill
-	const ok = await new Promise((resolve) => {
+	// Tagged and untagged pieces both in stock: ask for every piece added by hand, so a tagged piece is
+	// not sold as an untagged one by habit. The server records each hand-picked piece with the bill.
+	const answer = await new Promise((resolve) => {
 		rfidManualPrompt.value = { item, ...check, resolve };
 	});
 	rfidManualPrompt.value = null;
-	return ok;
+	if (answer === "unread") return askRfidUnread(item.item_code, name, 1);
+	return answer;
 }
 
 /** Before payment: quantities typed or + pressed in the cart are checked here. */
