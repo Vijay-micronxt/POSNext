@@ -283,6 +283,24 @@ watch(cartQty, (now, before = {}) => {
 	if (!removal.value && removalQueue.length) removal.value = removalQueue.shift();
 });
 
+// A basket opened or reloaded with approvals for pieces that are not in the cart (cart cleared, page
+// reloaded): drop them once, so they never let a later hand-picked piece in without a question.
+let reconciled = null;
+watch(
+	() => rfid.basket,
+	async (name) => {
+		if (!name || reconciled === name) return;
+		reconciled = name;
+		await nextTick();
+		const qty = cartQty.value;
+		for (const [itemCode, approved] of Object.entries(rfid.unread || {})) {
+			const handPicked = Math.max(Math.floor(qty[itemCode] || 0) - rfid.itemTagsInCart(itemCode).length, 0);
+			if (approved > handPicked) rfid.dropUnread(itemCode, approved - handPicked).catch(() => {});
+		}
+	},
+	{ immediate: true },
+);
+
 /** No answer (dialog closed): pieces without a tag go first, then approvals, then the last tags read. */
 function settleRemoval(state, count) {
 	let left = count;

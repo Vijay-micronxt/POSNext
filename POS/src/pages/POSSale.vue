@@ -2073,7 +2073,8 @@ async function rfidManualAddAllowed(item) {
 		showWarning(rfidTooManyMessage(name, check));
 		return false;
 	}
-	if (rfidStore.unread[item.item_code]) return true; // approved on this bill already
+	// an approved "tag will not read" piece not yet in the cart covers this one; nothing else does
+	if (handPicked < (rfidStore.unread[item.item_code] || 0)) return true;
 	// Tagged and untagged pieces both in stock: ask for every piece added by hand, so a tagged piece is
 	// not sold as an untagged one by habit. The server records each hand-picked piece with the bill.
 	const answer = await new Promise((resolve) => {
