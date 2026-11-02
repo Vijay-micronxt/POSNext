@@ -114,7 +114,7 @@
 						</div>
 					</div>
 					<p class="text-xs text-gray-500">
-						{{ __("Closing without picking takes off pieces without a tag first, then approved ones, then the last tags read.") }}
+						{{ __("Close to keep the piece(s) on the bill.") }}
 					</p>
 				</div>
 			</template>
@@ -337,9 +337,13 @@ function removalScanned() {
 	removalScan.value = "";
 }
 
+/** Closed without picking: the pieces not picked go back on the bill (the quantity is put back). */
 function closeRemoval() {
 	const r = removal.value;
-	if (r && r.left > 0) settleRemoval(r, r.left);
+	if (r && r.left > 0) {
+		const line = cartStore.invoiceItems.find((i) => i.item_code === r.itemCode && !(i.serial_no || "").trim());
+		if (line) cartStore.updateItemQuantity(r.itemCode, Number(line.quantity || 0) + r.left, line.uom);
+	}
 	nextRemoval();
 }
 
