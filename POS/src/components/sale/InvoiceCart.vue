@@ -1457,7 +1457,6 @@
  * ============================================================================
  */
 import { usePOSCartStore } from "@/stores/posCart";
-import { usePosRfidStore } from "@/stores/posRfid";
 import { usePOSSettingsStore } from "@/stores/posSettings";
 import { usePOSOffersStore } from "@/stores/posOffers";
 import { useCustomerSearchStore } from "@/stores/customerSearch";
@@ -1480,7 +1479,6 @@ import EditItemDialog from "./EditItemDialog.vue";
  * ============================================================================
  */
 const cartStore = usePOSCartStore(); // Pinia store for cart state management
-const rfidStore = usePosRfidStore(); // RFID counter mode (inactive without rfid_retail)
 const settingsStore = usePOSSettingsStore(); // Pinia store for POS settings
 const offersStore = usePOSOffersStore(); // Pinia store for offers/promotions
 const customerSearchStore = useCustomerSearchStore(); // Pinia store for customer search
@@ -2038,8 +2036,6 @@ function decrementQuantity(item) {
 	const newQty = Math.round((item.quantity - step) * 10000) / 10000;
 
 	if (newQty <= 0) {
-		// RFID counter: the last piece is taken off with the line's remove button, never by "-"
-		if (rfidStore.enabled) return;
 		// If quantity would be 0 or negative, remove the item
 		emit("remove-item", item.item_code, item.uom);
 	} else {
