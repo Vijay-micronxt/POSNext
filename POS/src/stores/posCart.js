@@ -218,7 +218,10 @@ export const usePOSCartStore = defineStore("posCart", () => {
 			const totalQty = (existing ? existing.quantity : 0) + qty;
 			const warehouse = item.warehouse || currentProfile.warehouse;
 
-			const check = checkStockAvailability(item, totalQty, warehouse);
+			// The item grid shows stock less what is already in the cart (actual_qty); the cart quantity is
+			// added to totalQty here, so compare with the server stock, or the cart is counted twice.
+			const stockItem = item.original_stock !== undefined ? { ...item, actual_qty: item.original_stock } : item;
+			const check = checkStockAvailability(stockItem, totalQty, warehouse);
 			if (!check.available) {
 				throw new Error(check.error);
 			}

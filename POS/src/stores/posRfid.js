@@ -138,6 +138,21 @@ export const usePosRfidStore = defineStore("posRfid", () => {
 		}
 	}
 
+	/** Pieces approved as "tag will not read" left the bill: drop that many approvals (all without qty). */
+	async function dropUnread(itemCode, qty = null) {
+		if (!basket.value || !(unread.value[itemCode] > 0)) return;
+		await serial(async () => {
+			if (!basket.value) return;
+			applyView(
+				await call("rfid_retail.api.pos.drop_unread", {
+					basket: basket.value,
+					item_code: itemCode,
+					qty,
+				}),
+			);
+		});
+	}
+
 	/** Approve pieces of an item whose tag will not read; throws with the server's message when refused. */
 	async function approveUnread({ itemCode, qty = 1, reason, note, manager, password }) {
 		return serial(async () => {
@@ -236,6 +251,7 @@ export const usePosRfidStore = defineStore("posRfid", () => {
 		if (!enabled.value || !state) return; // nothing on the tray: the basket stays for the next bill
 		const current = basket.value;
 		inCart.value = new Set(); // synchronously, before the caller clears the cart
+		unread.value = {}; // the approvals stay on the held basket; the cart watcher must not drop them
 		await serial(async () => {
 			try {
 				if (!state.basket && current)
@@ -348,8 +364,9 @@ export const usePosRfidStore = defineStore("posRfid", () => {
 	async function clearBasket() {
 		if (!enabled.value || !basket.value) return;
 		const current = basket.value;
-		// Cleared synchronously so the cart watcher does not remove units one by one.
+		// Cleared synchronously so the cart watcher does not remove units (or approvals) one by one.
 		inCart.value = new Set();
+		unread.value = {};
 		try {
 			await call("rfid_retail.api.pos.cancel_basket", { basket: current });
 		} finally {
@@ -388,6 +405,7 @@ export const usePosRfidStore = defineStore("posRfid", () => {
 		load,
 		scan,
 		removeUnit,
+		dropUnread,
 		pendingForCart,
 		itemTagsInCart,
 		keyOf,

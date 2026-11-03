@@ -64,12 +64,67 @@
 		<div v-for="(e, i) in rfid.events" :key="i" class="mt-1.5 rounded-md bg-red-50 px-2 py-1 text-xs text-red-700">
 			{{ e.message }}
 		</div>
+
+		<!-- Cart quantity went down: which piece went back? -->
+		<Dialog
+			:model-value="!!removal"
+			:options="{ title: __('Which piece is taken off the bill?'), size: 'sm' }"
+			@update:model-value="(open) => !open && closeRemoval()"
+		>
+			<template #body-content>
+				<div v-if="removal" class="space-y-3 py-2 text-sm text-gray-700" @pointerdown.stop>
+					<p>
+						{{ __("{0}: {1} piece(s) to take off. Pick each one.", [removal.name, removal.left]) }}
+					</p>
+					<button
+						v-if="removal.noTag > 0"
+						type="button"
+						class="w-full rounded-lg border border-gray-300 px-3 py-2 text-left hover:bg-gray-50"
+						@click="removePiece('notag')"
+					>
+						{{ __("Piece without a tag") }} <span class="text-gray-500">({{ removal.noTag }})</span>
+					</button>
+					<button
+						v-if="removal.unread > 0"
+						type="button"
+						class="w-full rounded-lg border border-gray-300 px-3 py-2 text-left hover:bg-gray-50"
+						@click="removePiece('unread')"
+					>
+						{{ __("Piece whose tag would not read (approved)") }} <span class="text-gray-500">({{ removal.unread }})</span>
+					</button>
+					<div v-if="removal.tags.length" class="space-y-1.5">
+						<div class="font-medium">{{ __("Piece read on the tray - read its tag, or pick it:") }}</div>
+						<input
+							v-model="removalScan"
+							type="text"
+							class="h-9 w-full rounded-lg border border-gray-300 px-3 text-sm"
+							:placeholder="__('Read the tag of the piece going back')"
+							@keydown.enter.prevent="removalScanned"
+						/>
+						<div class="flex flex-wrap gap-1">
+							<button
+								v-for="t in removal.tags"
+								:key="t"
+								type="button"
+								class="rounded-full border border-indigo-200 bg-indigo-50 px-2 py-0.5 font-mono text-xs text-indigo-700 hover:bg-indigo-100"
+								@click="removePiece('tag', t)"
+							>
+								{{ t }}
+							</button>
+						</div>
+					</div>
+					<p class="text-xs text-gray-500">
+						{{ __("Close to keep the piece(s) on the bill.") }}
+					</p>
+				</div>
+			</template>
+		</Dialog>
 	</div>
 </template>
 
 <script setup>
 import { computed, nextTick, onMounted, ref, watch } from "vue";
-import { FeatherIcon } from "frappe-ui";
+import { Dialog, FeatherIcon } from "frappe-ui";
 import { useToast } from "@/composables/useToast";
 import { useItemSearchStore } from "@/stores/itemSearch";
 import { usePOSCartStore } from "@/stores/posCart";
@@ -186,7 +241,10 @@ watch(cartSerials, (now) => {
 	}
 });
 
-// Items without serial numbers: the cart quantity going down drops that many tags from the tray.
+// Items without serial numbers: a cart line can hold pieces read on the tray (each its own tag),
+// pieces approved as "tag will not read" and pieces without a tag. When its quantity goes down the
+// cashier says which piece went back (and for a tagged one, which tag), so the tray and the approvals
+// stay true. The whole line removed: all its tags and approvals go.
 const cartQty = computed(() => {
 	const qty = {};
 	for (const item of cartStore.invoiceItems) {
@@ -195,15 +253,99 @@ const cartQty = computed(() => {
 	}
 	return qty;
 });
-watch(cartQty, (now) => {
-	const items = new Set(rfid.lines.filter((l) => !l.serial_no).map((l) => l.item_code));
-	for (const itemCode of items) {
+const removal = ref(null); // { itemCode, name, left, tags, unread, noTag }
+const removalScan = ref("");
+const removalQueue = [];
+
+watch(cartQty, (now, before = {}) => {
+	for (const itemCode of Object.keys(before)) {
+		const was = Math.floor(before[itemCode] || 0);
+		const is = Math.floor(now[itemCode] || 0);
+		if (is >= was) continue;
 		const tags = rfid.itemTagsInCart(itemCode);
-		const extra = tags.length - Math.floor(now[itemCode] || 0);
-		for (const key of tags.slice(tags.length - Math.max(extra, 0)))
-			rfid.removeUnit(key).catch(() => {});
+		const unread = Math.min(rfid.unread[itemCode] || 0, Math.max(was - tags.length, 0));
+		const noTag = Math.max(was - tags.length - unread, 0);
+		if (is <= 0) {
+			for (const key of tags) rfid.removeUnit(key).catch(() => {});
+			if (unread) rfid.dropUnread(itemCode).catch(() => {});
+			continue;
+		}
+		const gone = was - is;
+		const kinds = [tags.length, unread, noTag].filter((n) => n > 0).length;
+		if (kinds <= 1 && !(tags.length > gone)) {
+			// one kind only, and nothing to choose: settle at once
+			settleRemoval({ itemCode, tags, unread, noTag }, gone);
+			continue;
+		}
+		const line = cartStore.invoiceItems.find((i) => i.item_code === itemCode);
+		removalQueue.push({ itemCode, name: line?.item_name || itemCode, left: gone, tags: [...tags], unread, noTag });
 	}
+	if (!removal.value && removalQueue.length) removal.value = removalQueue.shift();
 });
+
+// A basket opened or reloaded with approvals for pieces that are not in the cart (cart cleared, page
+// reloaded): drop them once, so they never let a later hand-picked piece in without a question.
+let reconciled = null;
+watch(
+	() => rfid.basket,
+	async (name) => {
+		if (!name || reconciled === name) return;
+		reconciled = name;
+		await nextTick();
+		const qty = cartQty.value;
+		for (const [itemCode, approved] of Object.entries(rfid.unread || {})) {
+			const handPicked = Math.max(Math.floor(qty[itemCode] || 0) - rfid.itemTagsInCart(itemCode).length, 0);
+			if (approved > handPicked) rfid.dropUnread(itemCode, approved - handPicked).catch(() => {});
+		}
+	},
+	{ immediate: true },
+);
+
+/** No answer (dialog closed): pieces without a tag go first, then approvals, then the last tags read. */
+function settleRemoval(state, count) {
+	let left = count;
+	const fromNoTag = Math.min(left, state.noTag);
+	left -= fromNoTag;
+	const fromUnread = Math.min(left, state.unread);
+	left -= fromUnread;
+	if (fromUnread) rfid.dropUnread(state.itemCode, fromUnread).catch(() => {});
+	for (const key of state.tags.slice(state.tags.length - left)) rfid.removeUnit(key).catch(() => {});
+}
+
+function nextRemoval() {
+	removalScan.value = "";
+	removal.value = removalQueue.length ? removalQueue.shift() : null;
+}
+
+function removePiece(kind, tag = null) {
+	const r = removal.value;
+	if (!r) return;
+	if (kind === "tag") {
+		if (!r.tags.includes(tag)) return showError(__("Tag {0} is not on this bill for {1}.", [tag, r.name]));
+		rfid.removeUnit(tag).catch(() => {});
+		r.tags = r.tags.filter((t) => t !== tag);
+	} else if (kind === "unread") {
+		rfid.dropUnread(r.itemCode, 1).catch(() => {});
+		r.unread -= 1;
+	} else r.noTag -= 1;
+	r.left -= 1;
+	if (r.left <= 0) nextRemoval();
+}
+
+function removalScanned() {
+	for (const code of splitCodes(removalScan.value.toUpperCase())) if (removal.value) removePiece("tag", code);
+	removalScan.value = "";
+}
+
+/** Closed without picking: the pieces not picked go back on the bill (the quantity is put back). */
+function closeRemoval() {
+	const r = removal.value;
+	if (r && r.left > 0) {
+		const line = cartStore.invoiceItems.find((i) => i.item_code === r.itemCode && !(i.serial_no || "").trim());
+		if (line) cartStore.updateItemQuantity(r.itemCode, Number(line.quantity || 0) + r.left, line.uom);
+	}
+	nextRemoval();
+}
 
 // The invoice carries the basket so the server can verify every unit was read.
 watch(

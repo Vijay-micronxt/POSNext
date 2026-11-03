@@ -27,6 +27,7 @@
   "allow_credit_sale",
   "allow_customer_credit_payment",
   "allow_return",
+  "return_to_credit_by_default",
   "allow_partial_payment",
   "use_exact_amount",
   "enable_sales_persons",
@@ -240,6 +241,14 @@
    "fieldname": "allow_return",
    "fieldtype": "Check",
    "label": "Allow Return"
+  },
+  {
+   "default": "0",
+   "depends_on": "allow_return",
+   "description": "The return dialog starts with \"Add to Customer Credit Balance\" ticked. The cashier can still untick it and refund instead.",
+   "fieldname": "return_to_credit_by_default",
+   "fieldtype": "Check",
+   "label": "Return to Customer Credit by Default"
   },
   {
    "default": "0",
@@ -576,7 +585,7 @@
  ],
  "index_web_pages_for_search": 1,
  "links": [],
- "modified": "2026-10-31 12:00:00.000000",
+ "modified": "2026-11-03 12:00:00.000000",
  "modified_by": "Administrator",
  "module": "POS Next",
  "name": "POS Settings",
