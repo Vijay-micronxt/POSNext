@@ -1091,6 +1091,43 @@
 		</template>
 	</Dialog>
 
+	<!-- Return to customer credit: confirm before the return is made -->
+	<Dialog
+		v-model="creditConfirm.visible"
+		:options="{ title: __('Money goes to customer credit'), size: 'md' }"
+	>
+		<template #body-content>
+			<div class="space-y-3 text-start">
+				<div class="flex items-start gap-3 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3">
+					<FeatherIcon name="alert-triangle" class="h-5 w-5 flex-shrink-0 text-amber-600" />
+					<p class="text-sm text-amber-900">
+						{{
+							__(
+								"{0} will be added to the credit balance of {1}. No money is paid back now; the customer can use it on a later bill.",
+								[formatCurrency(returnTotal), originalInvoice?.customer_name || originalInvoice?.customer]
+							)
+						}}
+					</p>
+				</div>
+				<p class="text-sm text-gray-700">
+					{{
+						__(
+							"Giving the money back to the customer? Choose No, refund money and pick the mode of payment (Cash, UPI...) for the refund."
+						)
+					}}
+				</p>
+			</div>
+		</template>
+		<template #actions>
+			<div class="flex flex-col-reverse sm:flex-row justify-end gap-2 w-full">
+				<Button variant="subtle" @click="refundInstead">{{ __("No, refund money") }}</Button>
+				<Button variant="solid" theme="green" @click="confirmCreditReturn">{{
+					__("Yes, add to credit")
+				}}</Button>
+			</div>
+		</template>
+	</Dialog>
+
 	<!-- Error Dialog -->
 	<Dialog v-model="errorDialog.visible" :options="{ title: errorDialog.title, size: 'sm' }">
 		<template #body-content>
@@ -2001,6 +2038,21 @@ function decrementReturnQuantity(item) {
 	}
 }
 
+const creditConfirm = reactive({ visible: false, agreed: false });
+
+function confirmCreditReturn() {
+	creditConfirm.visible = false;
+	creditConfirm.agreed = true;
+	handleCreateReturn();
+}
+
+/** The customer gets the money back: leave credit, the refund (mode of payment) section opens. */
+function refundInstead() {
+	creditConfirm.visible = false;
+	addToCustomerCredit.value = false;
+	showWarning(__("Choose the mode of payment for the refund, then Create Return."));
+}
+
 async function handleCreateReturn() {
 	if (!canCreateReturn.value || isSubmitting.value) return;
 	if (!hasOpenShift.value) {
@@ -2013,6 +2065,13 @@ async function handleCreateReturn() {
 	if (!validateSelectedItems()) {
 		return;
 	}
+
+	// Credit instead of a refund: say so, and offer the refund, before anything is made
+	if (addToCustomerCredit.value && !isOriginalCreditSale.value && !creditConfirm.agreed) {
+		creditConfirm.visible = true;
+		return;
+	}
+	creditConfirm.agreed = false;
 
 	submitError.value = "";
 	isSubmitting.value = true;
