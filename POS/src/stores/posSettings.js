@@ -26,6 +26,7 @@ export const usePOSSettingsStore = defineStore("posSettings", () => {
 		allow_credit_sale: 0,
 		allow_customer_credit_payment: 0,
 		allow_return: 0,
+		return_to_credit_by_default: 0,
 		allow_write_off_change: 0,
 		allow_partial_payment: 0,
 		use_exact_amount: 0,
@@ -107,6 +108,7 @@ export const usePOSSettingsStore = defineStore("posSettings", () => {
 		Boolean(settings.value.allow_customer_credit_payment)
 	);
 	const allowReturn = computed(() => Boolean(settings.value.allow_return));
+	const returnToCreditByDefault = computed(() => Boolean(settings.value.return_to_credit_by_default));
 	const allowWriteOffChange = computed(() => Boolean(settings.value.allow_write_off_change));
 	const allowPartialPayment = computed(() => Boolean(settings.value.allow_partial_payment));
 	const useExactAmount = computed(() => Boolean(settings.value.use_exact_amount));
@@ -259,6 +261,7 @@ export const usePOSSettingsStore = defineStore("posSettings", () => {
 			allow_credit_sale: 0,
 			allow_customer_credit_payment: 0,
 			allow_return: 0,
+			return_to_credit_by_default: 0,
 			allow_write_off_change: 0,
 			allow_partial_payment: 0,
 			use_exact_amount: 0,
@@ -375,6 +378,7 @@ export const usePOSSettingsStore = defineStore("posSettings", () => {
 		allowCreditSale,
 		allowCustomerCreditPayment,
 		allowReturn,
+		returnToCreditByDefault,
 		allowWriteOffChange,
 		allowPartialPayment,
 		useExactAmount,

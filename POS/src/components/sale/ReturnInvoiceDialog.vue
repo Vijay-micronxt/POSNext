@@ -1181,6 +1181,7 @@
 <script setup>
 import { useOfflineStatus } from "@/composables/useOfflineStatus";
 import { useToast } from "@/composables/useToast";
+import { usePOSSettingsStore } from "@/stores/posSettings";
 import { getPaymentIcon } from "@/utils/payment";
 import {
 	DEFAULT_CURRENCY,
@@ -1194,6 +1195,7 @@ import { computed, onMounted, onUnmounted, reactive, ref, watch } from "vue";
 
 const { showSuccess, showError, showWarning } = useToast();
 const { isOffline } = useOfflineStatus();
+const settingsStore = usePOSSettingsStore();
 
 // ============================================
 // Constants (hoisted for performance)
@@ -1411,6 +1413,10 @@ const fetchInvoiceResource = createResource({
 			// Partial payments require proportional refund calculation.
 			isPartiallyPaid.value =
 				originalPaidAmount.value > 0 && originalOutstandingAmount.value > 0;
+
+			// POS Settings may start the return on customer credit (not for a credit sale: that reverses the debt)
+			addToCustomerCredit.value =
+				settingsStore.returnToCreditByDefault && !isOriginalCreditSale.value;
 
 			// Load payment methods if not already loaded
 			if (paymentMethods.value.length === 0 && props.posProfile) {
