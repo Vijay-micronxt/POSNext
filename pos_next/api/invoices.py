@@ -2452,6 +2452,13 @@ def prepare_return_invoice(invoice_name, pos_opening_shift=None):
 
 	returned_qty_map = {row["key_field"]: flt(row["returned_qty"]) for row in returned_qty_results}
 
+	# make_sales_return already sets each row to what is left after earlier returns; count from the
+	# original rows, or every earlier return is taken off twice ("All items ... returned" too early)
+	original_qty_map = {
+		row.name: abs(flt(row.qty))
+		for row in frappe.get_all("Sales Invoice Item", {"parent": invoice_name}, ["name", "qty"])
+	}
+
 	# Convert to dict and update items with remaining quantities
 	return_dict = return_doc.as_dict()
 
@@ -2513,7 +2520,7 @@ def prepare_return_invoice(invoice_name, pos_opening_shift=None):
 	def process_return_item(item):
 		"""Process single item for return, returns None if not returnable."""
 		item_ref = item.get("sales_invoice_item") or item.get("item_code")
-		original_qty = abs(flt(item.get("qty", 0)))
+		original_qty = original_qty_map.get(item.get("sales_invoice_item")) or abs(flt(item.get("qty", 0)))
 		remaining_qty = original_qty - returned_qty_map.get(item_ref, 0)
 
 		if remaining_qty <= 0:
