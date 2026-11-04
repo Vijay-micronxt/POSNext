@@ -27,6 +27,7 @@ POS_SETTINGS_FIELDS = [
 	"payable_rounding_step",
 	"allow_credit_sale",
 	"allow_customer_credit_payment",
+	"apply_customer_credit_by_default",
 	"allow_return",
 	"return_to_credit_by_default",
 	"allow_partial_payment",
@@ -60,6 +61,7 @@ DEFAULT_POS_SETTINGS = {
 	"disable_rounded_total": 0,  # Derived from POS Profile
 	"allow_credit_sale": 0,
 	"allow_customer_credit_payment": 0,
+	"apply_customer_credit_by_default": 0,
 	"allow_return": 0,
 	"return_to_credit_by_default": 0,
 	"allow_write_off_change": 0,  # Derived from POS Profile
