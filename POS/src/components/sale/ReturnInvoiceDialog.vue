@@ -1,7 +1,9 @@
 <template>
 	<Dialog v-model="showDialog" :options="{ title: __('Create Return Invoice'), size: '5xl' }">
 		<template #body-content>
-			<div class="flex flex-col gap-4">
+			<!-- reka-ui's DialogOverlay wraps the content and prevents pointerdown, which stops
+			     a click from focusing the inputs; keep pointerdown inside the dialog. -->
+			<div class="flex flex-col gap-4" @pointerdown.stop>
 				<!-- Offline Mode Warning -->
 				<div
 					v-if="isOffline"
@@ -77,13 +79,13 @@
 								v-if="
 									showSuggestions &&
 									(searchSuggestions.length > 0 ||
-										searchInvoiceByNumberResource.loading)
+										loadInvoicesResource.loading)
 								"
 								class="absolute z-50 w-full mt-1 bg-white border border-gray-200 rounded-lg shadow-lg max-h-64 overflow-y-auto"
 							>
 								<!-- Loading indicator for server search -->
 								<div
-									v-if="searchInvoiceByNumberResource.loading"
+									v-if="loadInvoicesResource.loading"
 									class="px-3 py-2 flex items-center gap-2 text-blue-600 bg-blue-50"
 								>
 									<FeatherIcon name="loader" class="w-4 h-4 animate-spin" />
@@ -173,7 +175,10 @@
 					</div>
 
 					<!-- Loading State - Skeleton Loader -->
-					<div v-if="loadInvoicesResource.loading" class="flex flex-col gap-2 pe-2">
+					<div
+						v-if="loadInvoicesResource.loading && !invoiceList.length"
+						class="flex flex-col gap-2 pe-2"
+					>
 						<div
 							v-for="i in 4"
 							:key="i"
@@ -252,7 +257,7 @@
 						<!-- Searching Indicator -->
 						<div
 							v-if="
-								searchInvoiceByNumberResource.loading &&
+								loadInvoicesResource.loading &&
 								filteredInvoiceList.length === 0
 							"
 							class="text-center py-12"
@@ -326,7 +331,9 @@
 	<!-- Return Process Modal -->
 	<Dialog v-model="returnModal.visible" :options="{ title: __('Process Return'), size: '5xl' }">
 		<template #body-content>
-			<div class="flex flex-col gap-4">
+			<!-- reka-ui's DialogOverlay wraps the content and prevents pointerdown, which stops
+			     a click from focusing the inputs; keep pointerdown inside the dialog. -->
+			<div class="flex flex-col gap-4" @pointerdown.stop>
 				<!-- Invoice Details -->
 				<div
 					v-if="originalInvoice"
@@ -1243,7 +1250,6 @@ const DATE_FORMAT_OPTIONS = { year: "numeric", month: "short", day: "numeric" };
 const MAX_SUGGESTIONS = 8;
 const SEARCH_DEBOUNCE_MS = 300;
 const MIN_SEARCH_LENGTH = 2;
-const MIN_SERVER_SEARCH_LENGTH = 4;
 
 const props = defineProps({
 	modelValue: Boolean,
@@ -1272,6 +1278,9 @@ const paymentMethods = ref([]);
 const refundPayments = ref([]);
 const invoiceList = ref([]);
 const invoiceListFilter = ref("");
+// Search term the current invoiceList was fetched for (server-side match)
+const searchedTerm = ref("");
+let requestedTerm = "";
 const itemSearchFilter = ref("");
 const submitError = ref("");
 const isSubmitting = ref(false);
@@ -1308,40 +1317,23 @@ const returnExpiredDialog = reactive({
 const loadInvoicesResource = createResource({
 	url: "pos_next.api.invoices.get_returnable_invoices",
 	makeParams() {
+		requestedTerm = serverSearchTerm.value;
 		return {
 			limit: 50,
 			pos_profile: props.posProfile,
+			search: requestedTerm,
 		};
 	},
 	auto: false,
 	onSuccess(data) {
 		if (data) {
 			invoiceList.value = data;
+			searchedTerm.value = requestedTerm;
 		}
 	},
 	onError(error) {
 		console.error("Error loading invoices:", error);
 		showError(__("Failed to load recent invoices"));
-	},
-});
-
-// Resource for searching a specific invoice by number (searches entire database)
-const searchInvoiceByNumberResource = createResource({
-	url: "pos_next.api.invoices.search_invoice_by_number",
-	auto: false,
-	onSuccess(data) {
-		if (data && data.length > 0) {
-			// Merge search results with existing invoice list, avoiding duplicates
-			const existingNames = new Set(invoiceList.value.map((inv) => inv.name));
-			const newInvoices = data.filter((inv) => !existingNames.has(inv.name));
-			if (newInvoices.length > 0) {
-				// Add to the beginning of the list so they appear first
-				invoiceList.value = [...newInvoices, ...invoiceList.value];
-			}
-		}
-	},
-	onError(error) {
-		console.error("Error searching invoice:", error);
 	},
 });
 
@@ -1730,7 +1722,15 @@ const filterInvoicesByTerm = (invoices, searchTerm) => {
 // Memoized search term to avoid recalculating in multiple computeds
 const normalizedSearchTerm = computed(() => invoiceListFilter.value?.trim() || "");
 
+const serverSearchTerm = computed(() =>
+	normalizedSearchTerm.value.length >= MIN_SEARCH_LENGTH ? normalizedSearchTerm.value : ""
+);
+
+// Once the server has answered for the typed term, show its matches as-is (they can
+// match on the Customer's saved mobile, which the list rows don't carry); until then
+// narrow the current list locally for instant feedback.
 const filteredInvoiceList = computed(() => {
+	if (searchedTerm.value === serverSearchTerm.value) return invoiceList.value;
 	return filterInvoicesByTerm(invoiceList.value, normalizedSearchTerm.value);
 });
 
@@ -1747,28 +1747,11 @@ let serverSearchTimeout = null;
 const looksLikeInvoiceNumber = (term) =>
 	INVOICE_PATTERN.test(term) || INVOICE_FORMAT_PATTERN.test(term) || term.includes("-");
 
-// Watch for search input changes and auto-search server when no local matches
-watch(normalizedSearchTerm, (searchTerm) => {
-	// Clear any pending search
-	if (serverSearchTimeout) {
-		clearTimeout(serverSearchTimeout);
-		serverSearchTimeout = null;
-	}
-
-	// Early exit conditions
-	if (!searchTerm || searchTerm.length < MIN_SERVER_SEARCH_LENGTH) return;
-	if (!looksLikeInvoiceNumber(searchTerm)) return;
-
-	// Check if we already have this in local results (reuse filtered list)
-	if (filteredInvoiceList.value.length > 0) return;
-
-	// Debounce server search
-	serverSearchTimeout = setTimeout(() => {
-		searchInvoiceByNumberResource.submit({
-			search_term: searchTerm,
-			pos_profile: props.posProfile,
-		});
-	}, SEARCH_DEBOUNCE_MS);
+// Search runs on the server so older invoices are found too
+watch(serverSearchTerm, () => {
+	clearTimeout(serverSearchTimeout);
+	if (!showDialog.value || isOffline.value) return;
+	serverSearchTimeout = setTimeout(() => loadInvoicesResource.reload(), SEARCH_DEBOUNCE_MS);
 });
 
 // Auto-populate payment amount when return total changes (single payment only)
@@ -2106,6 +2089,7 @@ function resetForm() {
 	// Reset list and search state
 	invoiceList.value = [];
 	invoiceListFilter.value = "";
+	searchedTerm.value = "";
 	itemSearchFilter.value = "";
 
 	// Reset submission state
