@@ -2049,6 +2049,60 @@
 			</div>
 		</template>
 	</Dialog>
+	<!-- Partial payment alert: shown before a bill is saved with an amount still due -->
+	<Dialog v-model="partialConfirmVisible" :options="{ size: 'md' }">
+		<template #body>
+			<div class="partial-alert p-2.5 rounded-xl">
+				<div class="bg-white rounded-lg overflow-hidden">
+				<div class="bg-red-600 px-6 py-4 flex items-center gap-3 text-white">
+					<svg class="w-9 h-9 flex-shrink-0" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+						<path
+							stroke-linecap="round"
+							stroke-linejoin="round"
+							d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126ZM12 15.75h.007v.008H12v-.008Z"
+						/>
+					</svg>
+					<div>
+						<h3 class="text-lg font-bold uppercase tracking-wide">{{ __("Payment not complete") }}</h3>
+						<p class="text-sm text-red-100">{{ __("This bill is not fully paid") }}</p>
+					</div>
+				</div>
+				<div class="px-6 py-5">
+					<div class="flex justify-between text-sm text-gray-600">
+						<span>{{ __("Bill total") }}</span>
+						<span class="font-semibold text-gray-900">{{ formatCurrency(grandTotal) }}</span>
+					</div>
+					<div class="flex justify-between text-sm text-gray-600 mt-1.5">
+						<span>{{ __("Received") }}</span>
+						<span class="font-semibold text-gray-900">{{ formatCurrency(partialConfirm.paid) }}</span>
+					</div>
+					<div class="mt-4 rounded-lg border-2 border-red-500 bg-red-50 px-4 py-3 text-center">
+						<div class="text-xs font-bold uppercase tracking-wider text-red-600">{{ __("Still to collect") }}</div>
+						<div class="font-extrabold text-red-600 mt-1" style="font-size: 2.25rem; line-height: 2.5rem">{{ formatCurrency(partialConfirm.due) }}</div>
+					</div>
+					<p class="text-sm text-gray-600 mt-4 text-center">
+						{{ __("Collect the remaining amount now, or keep it due on the customer's account.") }}
+					</p>
+					<div class="flex flex-col gap-2.5 mt-5">
+						<button
+							ref="partialCollectButton"
+							@click="resolvePartialConfirm(false)"
+							class="w-full py-3 rounded-lg text-base font-bold text-white bg-green-600 hover:bg-green-700 active:bg-green-800 focus:outline-none focus-visible:ring-4 focus-visible:ring-green-300 transition-colors"
+						>
+							{{ __("Collect {0} now", [formatCurrency(partialConfirm.due)]) }}
+						</button>
+						<button
+							@click="resolvePartialConfirm(true)"
+							class="w-full py-2.5 rounded-lg text-sm font-semibold text-red-700 bg-white border-2 border-red-300 hover:bg-red-50 active:bg-red-100 transition-colors"
+						>
+							{{ __("Keep {0} due and save bill", [formatCurrency(partialConfirm.due)]) }}
+						</button>
+					</div>
+				</div>
+				</div>
+			</div>
+		</template>
+	</Dialog>
 </template>
 
 <script setup>
@@ -3296,6 +3350,37 @@ watch(overpayConfirmVisible, (visible) => {
 	}
 });
 
+// Partial payment alert: loud on purpose, the safe choice (collect the rest) is the default
+const partialConfirmVisible = ref(false);
+const partialConfirm = ref({ paid: 0, due: 0 });
+const partialCollectButton = ref(null);
+let partialConfirmResolve = null;
+
+function showPartialConfirm(paid, due) {
+	return new Promise((resolve) => {
+		partialConfirm.value = { paid, due };
+		partialConfirmResolve = resolve;
+		partialConfirmVisible.value = true;
+		// Enter or Space right after the alert opens picks the safe choice
+		nextTick(() => partialCollectButton.value?.focus());
+	});
+}
+
+function resolvePartialConfirm(result) {
+	const resolve = partialConfirmResolve;
+	partialConfirmResolve = null;
+	partialConfirmVisible.value = false;
+	resolve?.(result);
+}
+
+watch(partialConfirmVisible, (visible) => {
+	if (!visible && partialConfirmResolve) {
+		const resolve = partialConfirmResolve;
+		partialConfirmResolve = null;
+		resolve(false);
+	}
+});
+
 // Add custom amount for a method
 async function addCustomPayment(method, amount) {
 	log.debug("[PaymentDialog] Add custom payment:", {
@@ -3454,7 +3539,7 @@ function clearAll() {
 	customAmount.value = "";
 }
 
-function completePayment() {
+async function completePayment() {
 	log.debug("[PaymentDialog] Complete payment called:", {
 		canComplete: canComplete.value,
 		totalPaid: totalPaid.value,
@@ -3483,6 +3568,13 @@ function completePayment() {
 	const effectivePaid = totalPaid.value + writeOffAmount.value;
 	const isPartial = effectivePaid < props.grandTotal;
 	const outstanding = isPartial ? roundCurrency(props.grandTotal - effectivePaid) : 0;
+
+	// A partial payment is often a slip (cashier in a hurry): say what stays due and let them go
+	// back to collect the rest before the bill is saved. Not for a credit sale (nothing tendered).
+	if (isPartial && totalPaid.value > 0) {
+		const confirmed = await showPartialConfirm(effectivePaid, outstanding);
+		if (!confirmed) return;
+	}
 
 	const paymentData = {
 		payments: paymentEntries.value,
@@ -3651,3 +3743,45 @@ watch(
 	}
 );
 </script>
+
+<style scoped>
+/* Hazard-tape border: yellow/black stripes that keep moving, plus a shake when it opens */
+.partial-alert {
+	background-image: repeating-linear-gradient(
+		45deg,
+		#facc15 0,
+		#facc15 14px,
+		#111827 14px,
+		#111827 28px
+	);
+	/* one stripe period along each axis (28px * sqrt 2) so the tile repeats without a seam */
+	background-size: 39.6px 39.6px;
+	animation:
+		partial-alert-shake 0.45s ease-in-out,
+		partial-alert-tape 0.8s linear infinite;
+}
+
+@keyframes partial-alert-tape {
+	from {
+		background-position: 0 0;
+	}
+	to {
+		background-position: 39.6px 0;
+	}
+}
+
+@keyframes partial-alert-shake {
+	0%,
+	100% {
+		transform: translateX(0);
+	}
+	20%,
+	60% {
+		transform: translateX(-8px);
+	}
+	40%,
+	80% {
+		transform: translateX(8px);
+	}
+}
+</style>
