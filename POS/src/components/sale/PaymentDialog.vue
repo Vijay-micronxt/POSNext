@@ -455,13 +455,13 @@
 							'rounded-lg border p-2 flex items-center justify-between',
 							totalAvailableCredit < 0
 								? 'bg-red-50 border-red-200'
-								: 'bg-emerald-50 border-emerald-200',
+								: 'bg-green-50 border-green-200',
 						]"
 					>
 						<span
 							:class="[
 								'text-xs font-semibold',
-								totalAvailableCredit < 0 ? 'text-red-700' : 'text-emerald-700',
+								totalAvailableCredit < 0 ? 'text-red-700' : 'text-green-700',
 							]"
 						>
 							{{
@@ -474,7 +474,7 @@
 						<span
 							:class="[
 								'text-base font-bold',
-								totalAvailableCredit < 0 ? 'text-red-600' : 'text-emerald-600',
+								totalAvailableCredit < 0 ? 'text-red-600' : 'text-green-600',
 							]"
 						>
 							{{
@@ -1219,29 +1219,38 @@
 								@click="applyCustomerCredit"
 								:disabled="remainingAmount === 0 || remainingAvailableCredit === 0"
 								:class="[
-									'inline-flex items-center rounded-lg border-2 transition-all font-medium',
+									'relative inline-flex items-center rounded-lg border-2 transition-all font-medium',
 									isSmallMobile
 										? 'gap-0.5 px-1.5 h-7 text-[10px]'
 										: 'gap-1 lg:gap-2 px-2.5 lg:px-4 h-8 text-xs lg:h-11 lg:text-sm',
-									remainingAmount === 0 || remainingAvailableCredit === 0
-										? 'opacity-50 cursor-not-allowed'
-										: 'cursor-pointer',
 									getMethodTotal('Customer Credit') > 0
-										? 'border-emerald-500 bg-emerald-50 text-emerald-700'
-										: 'border-emerald-300 bg-emerald-50 hover:border-emerald-500 hover:bg-emerald-100 text-emerald-700',
+										? 'border-green-500 bg-green-50 text-green-800 cursor-default'
+										: remainingAmount === 0 || remainingAvailableCredit === 0
+										? 'border-gray-200 bg-gray-100 text-gray-400 cursor-not-allowed opacity-60'
+										: 'border-gray-200 bg-white hover:border-green-400 hover:bg-green-50 text-gray-700 cursor-pointer',
 								]"
 							>
-								<span :class="isSmallMobile ? 'text-xs' : 'text-sm lg:text-lg'"
-									>💳</span
+								<!-- Tick in the corner while the credit is on the bill -->
+								<span
+									v-if="getMethodTotal('Customer Credit') > 0"
+									class="absolute -top-2 -right-2 flex items-center justify-center w-5 h-5 rounded-full bg-green-600 text-white ring-2 ring-white"
 								>
+									<svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+										<path
+											stroke-linecap="round"
+											stroke-linejoin="round"
+											stroke-width="3"
+											d="M5 13l4 4L19 7"
+										/>
+									</svg>
+								</span>
+								<span :class="isSmallMobile ? 'text-xs' : 'text-sm lg:text-lg'">💳</span>
 								<span class="truncate">{{ __("Credit Balance") }}</span>
 								<span
 									v-if="getMethodTotal('Customer Credit') > 0"
 									:class="[
-										'font-bold text-emerald-600 bg-emerald-100 rounded',
-										isSmallMobile
-											? 'text-[8px] px-0.5 py-0.5'
-											: 'text-xs px-1 py-0.5',
+										'inline-flex items-center leading-none font-semibold tabular-nums text-white bg-green-600 rounded-md',
+										isSmallMobile ? 'h-4 px-1 text-[8px]' : 'h-6 px-2 text-xs',
 									]"
 								>
 									{{ formatCurrency(getMethodTotal("Customer Credit")) }}
@@ -1294,6 +1303,31 @@
 							:class="['text-gray-500', isSmallMobile ? 'text-xs' : 'text-sm']"
 						>
 							{{ __("No payment methods available") }}
+						</div>
+
+						<!-- Says plainly that the customer's credit balance is already on this bill -->
+						<div
+							v-if="getMethodTotal('Customer Credit') > 0"
+							:class="[
+								'mt-2 rounded-lg border border-green-200 bg-green-50 text-green-800 flex items-center gap-2',
+								isSmallMobile ? 'p-1.5 text-[10px]' : 'p-2 text-xs lg:text-sm',
+							]"
+						>
+							<span class="font-bold">✓</span>
+							<span>
+								{{
+									__("Customer's credit balance of {0} is applied to this bill.", [
+										formatCurrency(getMethodTotal("Customer Credit")),
+									])
+								}}
+								<template v-if="remainingAmount > 0">
+									{{
+										__("Collect the remaining {0} by another mode of payment.", [
+											formatCurrency(remainingAmount),
+										])
+									}}
+								</template>
+							</span>
 						</div>
 
 						<!-- Exact Amount Mode Info Banner -->
@@ -3007,8 +3041,9 @@ watch(show, (newVal) => {
 		// any redemptions made by other cashiers since the last open.
 		const creditEnabled = props.allowCreditSale || props.allowCustomerCreditPayment;
 		if (creditEnabled && props.customer && props.company) {
-			customerBalanceResource.fetch();
-			customerCreditResource.fetch();
+			Promise.all([customerBalanceResource.fetch(), customerCreditResource.fetch()])
+				.then(autoApplyCustomerCredit)
+				.catch(() => {});
 		}
 		selectedSalesPersons.value = [];
 		salesPersonSearch.value = "";
@@ -3379,6 +3414,15 @@ function applyCustomerCredit() {
 	});
 
 	log.debug("[PaymentDialog] Existing credit applied, new entries:", paymentEntries.value);
+}
+
+// "Apply Customer Credit by Default": once balance and credit sources have
+// loaded for this opening, apply the credit unless the cashier already did.
+function autoApplyCustomerCredit() {
+	if (!settingsStore.applyCustomerCreditByDefault || !show.value) return;
+	if (!customerCredit.value.length || totalAvailableCredit.value <= 0) return;
+	if (paymentEntries.value.some((e) => e.is_customer_credit)) return;
+	applyCustomerCredit();
 }
 
 // Add "Pay on Account" - Credit Sale (invoice with outstanding amount)

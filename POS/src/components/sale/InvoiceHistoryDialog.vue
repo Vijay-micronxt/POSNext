@@ -1,15 +1,18 @@
 <template>
 	<Dialog v-model="show" :options="{ title: __('Invoice History'), size: '5xl' }">
 		<template #body-content>
-			<div class="flex flex-col gap-4">
+			<!-- reka-ui's DialogOverlay wraps the content and prevents pointerdown, which stops
+			     a click from focusing the inputs; keep pointerdown inside the dialog. -->
+			<div class="flex flex-col gap-4" @pointerdown.stop>
 				<!-- Filters -->
 				<div class="flex items-center gap-2">
 					<div class="flex-1">
 						<Input
 							v-model="searchTerm"
 							type="text"
-							:placeholder="__('Search by invoice number or customer...')"
-							@input="searchInvoices"
+							:placeholder="__('Search by invoice, customer or mobile...')"
+							autocomplete="off"
+							@input="searchTerm = $event"
 						>
 							<template #prefix>
 								<svg
@@ -253,6 +256,7 @@ const emit = defineEmits([
 const show = ref(props.modelValue);
 const invoices = ref([]);
 const searchTerm = ref("");
+const SEARCH_DEBOUNCE_MS = 300;
 const page = ref(0);
 const pageSize = 20;
 const hasMore = ref(true);
@@ -272,6 +276,7 @@ const invoicesResource = createResource({
 			pos_profile: props.posProfile,
 			start: page.value * pageSize,
 			limit: pageSize,
+			search: searchTerm.value.trim(),
 		};
 	},
 	auto: false,
@@ -323,15 +328,13 @@ watch(showReturnDialog, (val) => {
 	}
 });
 
-const filteredInvoices = computed(() => {
-	if (!searchTerm.value) return invoices.value;
+// Search runs on the server, so older invoices are found too
+const filteredInvoices = computed(() => invoices.value);
 
-	const term = searchTerm.value.toLowerCase();
-	return invoices.value.filter(
-		(inv) =>
-			inv.name?.toLowerCase().includes(term) ||
-			inv.customer_name?.toLowerCase().includes(term)
-	);
+let searchTimeout = null;
+watch(searchTerm, () => {
+	clearTimeout(searchTimeout);
+	searchTimeout = setTimeout(loadInvoices, SEARCH_DEBOUNCE_MS);
 });
 
 function formatPaymentModes(invoice) {
@@ -369,10 +372,6 @@ function loadMore() {
 	page.value++;
 	isLoadingMore.value = true;
 	invoicesResource.reload();
-}
-
-function searchInvoices() {
-	// Debounced search - already filtered by computed property
 }
 
 function viewInvoice(invoice) {

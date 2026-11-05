@@ -1685,8 +1685,40 @@ def get_invoice(invoice_name):
 	return result
 
 
+def _apply_invoice_search(query, si, search=None):
+	"""Narrow a Sales Invoice query by a free-text search.
+
+	The search term matches the invoice number, customer ID, customer name, the
+	mobile on the invoice, or the mobile saved on the Customer.
+	"""
+	search = cstr(search).strip()
+	if search:
+		# Escape LIKE wildcards; frappe.qb's .like() parameterizes the value itself
+		like = "%{}%".format(search.replace("\\", "\\\\").replace("%", r"\%").replace("_", r"\_"))
+		condition = (
+			si.name.like(like)
+			| si.customer.like(like)
+			| si.customer_name.like(like)
+			| si.contact_mobile.like(like)
+		)
+		customer = frappe.qb.DocType("Customer")
+		mobile_matches = (
+			frappe.qb.from_(customer).select(customer.name).where(customer.mobile_no.like(like)).limit(100)
+		).run(pluck=True)
+		if mobile_matches:
+			condition = condition | si.customer.isin(mobile_matches)
+		query = query.where(condition)
+
+	return query
+
+
 @frappe.whitelist()
-def get_invoices(pos_profile: str, limit: int = 100, start: int = 0) -> list:
+def get_invoices(
+	pos_profile: str,
+	limit: int = 100,
+	start: int = 0,
+	search: str | None = None,
+) -> list:
 	"""
 	Get list of invoices for a POS Profile.
 
@@ -1694,6 +1726,7 @@ def get_invoices(pos_profile: str, limit: int = 100, start: int = 0) -> list:
 		pos_profile: POS Profile name
 		limit: Maximum number of invoices to return (default 100)
 		start: Offset for pagination (default 0)
+		search: Invoice number, customer ID/name or mobile (optional)
 
 	Returns:
 		List of invoices with details
@@ -1710,37 +1743,30 @@ def get_invoices(pos_profile: str, limit: int = 100, start: int = 0) -> list:
 	if not has_access and not frappe.has_permission("Sales Invoice", "read"):
 		frappe.throw(_("You don't have access to this POS Profile"))
 
-	# Query for invoices
-	invoices = frappe.db.sql(
-		"""
-		SELECT
-			name,
-			customer,
-			customer_name,
-			posting_date,
-			posting_time,
-			grand_total,
-			paid_amount,
-			outstanding_amount,
-			status,
-			docstatus,
-			is_return,
-			return_against
-		FROM
-			`tabSales Invoice`
-		WHERE
-			pos_profile = %(pos_profile)s
-			AND docstatus = 1
-			AND is_pos = 1
-		ORDER BY
-			posting_date DESC,
-			posting_time DESC
-		LIMIT %(limit)s
-		OFFSET %(start)s
-	""",
-		{"pos_profile": pos_profile, "limit": limit, "start": start},
-		as_dict=True,
+	si = frappe.qb.DocType("Sales Invoice")
+	query = (
+		frappe.qb.from_(si)
+		.select(
+			si.name,
+			si.customer,
+			si.customer_name,
+			si.posting_date,
+			si.posting_time,
+			si.grand_total,
+			si.paid_amount,
+			si.outstanding_amount,
+			si.status,
+			si.docstatus,
+			si.is_return,
+			si.return_against,
+		)
+		.where((si.pos_profile == pos_profile) & (si.docstatus == 1) & (si.is_pos == 1))
+		.orderby(si.posting_date, order=frappe.qb.desc)
+		.orderby(si.posting_time, order=frappe.qb.desc)
+		.limit(limit)
+		.offset(start)
 	)
+	invoices = _apply_invoice_search(query, si, search).run(as_dict=True)
 
 	invoice_names = [invoice.name for invoice in invoices]
 	payments_by_invoice = {}
@@ -1945,9 +1971,13 @@ def _filter_fully_returned(invoices):
 
 
 @frappe.whitelist()
-def get_returnable_invoices(limit=50, pos_profile=None):
+def get_returnable_invoices(limit=50, pos_profile=None, search=None):
 	"""Get list of invoices that have items available for return.
 	Filters by return validity period if configured in POS Settings.
+
+	search matches invoice number, customer ID/name or mobile. A searched invoice
+	is listed even past the return validity period, so opening it explains why
+	it can no longer be returned (same as search_invoice_by_number).
 
 	Two-step approach for performance:
 	1. Fetch recent POS invoices (fast indexed query, no JOINs)
@@ -1985,11 +2015,11 @@ def get_returnable_invoices(limit=50, pos_profile=None):
 		.limit(fetch_limit)
 	)
 
-	if return_validity_days > 0:
+	if return_validity_days > 0 and not cstr(search).strip():
 		cutoff_date = add_days(today(), -return_validity_days)
 		query = query.where(si.posting_date >= cutoff_date)
 
-	candidates = query.run(as_dict=True)
+	candidates = _apply_invoice_search(query, si, search).run(as_dict=True)
 
 	# Step 2: filter out fully-returned invoices, then trim to requested limit
 	return _filter_fully_returned(candidates)[: cint(limit)]
