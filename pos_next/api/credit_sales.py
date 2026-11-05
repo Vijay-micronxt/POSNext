@@ -14,6 +14,33 @@ from frappe import _
 from frappe.utils import cint, flt, get_datetime, nowdate, today
 
 
+def _stale_return_condition(SalesInvoice):
+	"""Returns whose ledger posts against the original sale (update_outstanding_for_self = 0).
+
+	Their own outstanding_amount is a stale copy of grand_total: the real credit sits on
+	the original invoice as negative outstanding. Credit is read from the original instead.
+	"""
+	return (
+		(SalesInvoice.is_return == 1)
+		& (SalesInvoice.update_outstanding_for_self == 0)
+		& SalesInvoice.return_against.isnotnull()
+		& (SalesInvoice.return_against != "")
+	)
+
+
+def _resolve_credit_holder(invoice_name):
+	"""Map a credit source to the invoice that actually holds the credit in the ledger."""
+	row = frappe.db.get_value(
+		"Sales Invoice",
+		invoice_name,
+		["is_return", "update_outstanding_for_self", "return_against"],
+		as_dict=True,
+	)
+	if row and row.is_return and not row.update_outstanding_for_self and row.return_against:
+		return row.return_against
+	return invoice_name
+
+
 @frappe.whitelist()
 def get_customer_balance(customer, company=None):
 	"""
@@ -27,8 +54,9 @@ def get_customer_balance(customer, company=None):
 	- Cash refund given: outstanding_amount = 0 → NOT counted as credit
 	- Added to customer credit: outstanding_amount < 0 → counted as credit
 
-	Note: Negative outstanding on regular invoices (from linked returns) is NOT counted
-	as credit to avoid double-counting - the credit is tracked on the return invoice.
+	Note: A return made against the original (update_outstanding_for_self = 0) posts its
+	credit onto the original invoice, so that negative outstanding is counted and the
+	return's own stale outstanding is not.
 
 	Args:
 		customer: Customer ID
@@ -75,14 +103,18 @@ def get_customer_balance(customer, company=None):
 			.where(base_filters & (SalesInvoice.is_return == 0))
 		)
 
-		# Query for return invoices
-		# Only count returns where outstanding_amount < 0 (not refunded in cash)
-		# If cash refund was given, outstanding_amount = 0 and should NOT count as credit
-		# If no cash refund (added to customer credit), outstanding_amount < 0
+		# Credit = negative outstanding as the ledger sees it. A return that updates
+		# its own outstanding holds the credit itself; a return made against the
+		# original (update_outstanding_for_self = 0) moves it onto the original sale,
+		# so the return's own (stale) outstanding is skipped to avoid double-counting.
 		return_query = (
 			frappe.qb.from_(SalesInvoice)
 			.select(Coalesce(Sum(Abs(SalesInvoice.outstanding_amount)), 0).as_("return_credit"))
-			.where(base_filters & (SalesInvoice.is_return == 1) & (SalesInvoice.outstanding_amount < 0))
+			.where(
+				base_filters
+				& (SalesInvoice.outstanding_amount < 0)
+				& ~_stale_return_condition(SalesInvoice)
+			)
 		)
 
 		# Execute queries
@@ -159,22 +191,30 @@ def get_available_credit(customer, company, pos_profile=None):
 
 	total_credit = []
 
-	# Get return invoices with negative outstanding (credit added to customer balance).
-	# We restrict to is_return=1 because a return SI also reduces the original
-	# sale's outstanding, so a regular SI with negative outstanding represents the
-	# same money as its linked return — counting both would double the credit.
+	# Invoices with negative outstanding (credit added to customer balance), read
+	# where the ledger keeps it: on a return that updates its own outstanding, or on
+	# the original sale for a return made against it (whose own outstanding is stale).
 	# This matches the logic in get_customer_balance.
-	outstanding_invoices = frappe.get_all(
-		"Sales Invoice",
-		filters={
-			"outstanding_amount": ["<", 0],
-			"docstatus": 1,
-			"customer": customer,
-			"company": company,
-			"is_return": 1,
-		},
-		fields=["name", "outstanding_amount", "is_return", "posting_date", "grand_total", "modified"],
-		order_by="posting_date desc",
+	SalesInvoice = frappe.qb.DocType("Sales Invoice")
+	outstanding_invoices = (
+		frappe.qb.from_(SalesInvoice)
+		.select(
+			SalesInvoice.name,
+			SalesInvoice.outstanding_amount,
+			SalesInvoice.is_return,
+			SalesInvoice.posting_date,
+			SalesInvoice.grand_total,
+			SalesInvoice.modified,
+		)
+		.where(
+			(SalesInvoice.outstanding_amount < 0)
+			& (SalesInvoice.docstatus == 1)
+			& (SalesInvoice.customer == customer)
+			& (SalesInvoice.company == company)
+			& ~_stale_return_condition(SalesInvoice)
+		)
+		.orderby(SalesInvoice.posting_date, order=frappe.qb.desc)
+		.run(as_dict=True)
 	)
 
 	for row in outstanding_invoices:
@@ -275,6 +315,10 @@ def redeem_customer_credit(invoice_name, customer_credit_dict):
 		credit_origin = credit_row.get("credit_origin")
 
 		if credit_type == "Invoice":
+			# A client holding an older credit list may still name the return itself
+			credit_origin = _resolve_credit_holder(credit_origin)
+
+
 			# Validate and lock the credit source before creating JE
 			_validate_and_lock_invoice_credit(
 				credit_origin,
