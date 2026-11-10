@@ -768,6 +768,14 @@ def update_invoice(data):
 			)
 			if not validation.get("valid"):
 				frappe.throw(validation.get("message"))
+		elif cint(invoice_doc.get("is_return")) and doctype == "Sales Invoice" and pos_profile:
+			# A return with no original bill is only allowed when POS Settings say so.
+			if not cint(
+				frappe.db.get_value(
+					DOCTYPE_POS_SETTINGS, {"pos_profile": pos_profile}, "allow_return_without_invoice"
+				)
+			):
+				frappe.throw(_("Returns without an invoice are not enabled for this POS Profile."))
 
 		# Ensure customer exists
 		customer_name = invoice_doc.get("customer")
@@ -987,6 +995,12 @@ def update_invoice(data):
 		if invoice_doc.get("is_return"):
 			# Return handling is primarily for Sales Invoice
 			if doctype == "Sales Invoice" and invoice_doc.get("payments"):
+				# Return without an invoice: the till cannot know the tax and rounding the
+				# server adds, so a single refund row pays back exactly the return total.
+				if not invoice_doc.get("return_against") and len(invoice_doc.payments) == 1:
+					refund = flt(invoice_doc.rounded_total) or flt(invoice_doc.grand_total)
+					invoice_doc.payments[0].amount = refund
+					invoice_doc.payments[0].base_amount = flt(refund * flt(invoice_doc.conversion_rate or 1))
 				for payment in invoice_doc.payments:
 					payment.amount = -abs(payment.amount)
 					if payment.base_amount:
@@ -1466,6 +1480,11 @@ def submit_invoice(invoice=None, data=None):
 		if redeemed_customer_credit and not invoice_doc.payments:
 			invoice_doc.flags.pos_next_redeemed_customer_credit = flt(redeemed_customer_credit)
 
+		# Exchange: clothes brought back without a bill pay (part of) this sale.
+		exchange = _parse_exchange(data.get("exchange"), invoice_doc, pos_profile)
+		if exchange and not invoice_doc.payments:
+			invoice_doc.flags.pos_next_redeemed_customer_credit = 1
+
 		# Allow intentional "Pay on Account" credit sales to submit without a
 		# payment row. The frontend sends is_credit_sale=1 when the cashier puts
 		# the full amount on the customer's account. Only honour it when the POS
@@ -1569,6 +1588,10 @@ def submit_invoice(invoice=None, data=None):
 					indicator="orange",
 				)
 
+		exchange_return = None
+		if exchange:
+			exchange_return = _make_exchange_return(invoice_doc, exchange)
+
 		# Log manual rate edits for audit trail (only after successful submission)
 		if doctype == DOCTYPE_SALES_INVOICE:
 			incoming_items = invoice.get("items") or []
@@ -1599,6 +1622,9 @@ def submit_invoice(invoice=None, data=None):
 			"change_amount": getattr(invoice_doc, "change_amount", 0),
 		}
 
+		if exchange_return:
+			result["exchange_return"] = exchange_return
+
 		# Include offline_id in response for client-side tracking
 		if offline_id:
 			result["offline_id"] = offline_id
@@ -1613,6 +1639,116 @@ def submit_invoice(invoice=None, data=None):
 		# Cleanup sync record if invoice was not successfully submitted
 		if sync_record_name and not invoice_submitted:
 			_cleanup_failed_sync(sync_record_name)
+
+
+def _parse_exchange(exchange, invoice_doc, pos_profile):
+	"""Validate the clothes brought back for an exchange sale. Returns a dict or None."""
+	if not exchange:
+		return None
+	if isinstance(exchange, str):
+		exchange = json.loads(exchange)
+	items = [d for d in (exchange.get("items") or []) if d.get("item_code") and flt(d.get("qty")) > 0]
+	if not items:
+		return None
+	if invoice_doc.doctype != DOCTYPE_SALES_INVOICE or cint(invoice_doc.get("is_return")):
+		frappe.throw(_("An exchange can only be made on a sale."))
+	if not cint(
+		frappe.db.get_value(DOCTYPE_POS_SETTINGS, {"pos_profile": pos_profile}, "allow_return_without_invoice")
+	):
+		frappe.throw(_("Returns without an invoice are not enabled for this POS Profile."))
+	exchange["items"] = items
+	return exchange
+
+
+def _make_exchange_return(sale_doc, exchange):
+	"""Return the exchanged clothes and settle the sale with their value.
+
+	The return's value first clears what is still due on the sale (Journal Entry,
+	same as customer credit redemption). Anything above the sale is paid back to
+	the customer on the return itself, so no credit is left behind on the customer.
+	"""
+	from pos_next.api.credit_sales import _create_credit_allocation_journal_entry
+
+	reason = (exchange.get("reason") or "").strip()
+	return_data = {
+		"doctype": DOCTYPE_SALES_INVOICE,
+		"pos_profile": sale_doc.pos_profile,
+		"posa_pos_opening_shift": sale_doc.get("posa_pos_opening_shift"),
+		"customer": sale_doc.customer,
+		"company": sale_doc.company,
+		"is_return": 1,
+		"is_pos": 1,
+		"update_stock": 1,
+		"items": [
+			{
+				"item_code": d.get("item_code"),
+				"qty": -abs(flt(d.get("qty"))),
+				"rate": flt(d.get("rate")),
+				"price_list_rate": flt(d.get("price_list_rate")) or flt(d.get("rate")),
+				"warehouse": d.get("warehouse"),
+				"uom": d.get("uom"),
+				"conversion_factor": flt(d.get("conversion_factor")) or 1,
+			}
+			for d in exchange["items"]
+		],
+		"payments": [],
+		"remarks": _("Exchange on {0}: {1}").format(sale_doc.name, reason)
+		if reason
+		else _("Exchange on {0}").format(sale_doc.name),
+	}
+	created = update_invoice(json.dumps(return_data))
+	return_doc = frappe.get_doc(DOCTYPE_SALES_INVOICE, created.get("name"))
+	return_doc.flags.ignore_permissions = True
+
+	return_value = flt(return_doc.rounded_total) or flt(return_doc.grand_total)
+	return_value = abs(return_value)
+	sale_due = max(flt(frappe.db.get_value(DOCTYPE_SALES_INVOICE, sale_doc.name, "outstanding_amount")), 0)
+	give_back = flt(return_value - sale_due, return_doc.precision("grand_total"))
+
+	if give_back > 0:
+		refund_mode = exchange.get("refund_mode") or _default_cash_mode(sale_doc.pos_profile)
+		if not refund_mode:
+			frappe.throw(_("Pick a mode of payment to give {0} back to the customer.").format(give_back))
+		return_doc.append("payments", {"mode_of_payment": refund_mode, "amount": -give_back})
+		_set_payment_accounts(return_doc.payments, return_doc.company)
+	else:
+		# The whole return value pays the sale; nothing is paid back.
+		return_doc.flags.pos_next_redeemed_customer_credit = 1
+
+	return_doc.save()
+	return_doc.submit()
+
+	settle = min(return_value, sale_due)
+	if settle > 0:
+		sale_doc.reload()
+		_create_credit_allocation_journal_entry(sale_doc, return_doc.name, settle)
+
+	if not sale_doc.get("remarks") or sale_doc.remarks == "No Remarks":
+		frappe.db.set_value(
+			DOCTYPE_SALES_INVOICE,
+			sale_doc.name,
+			"remarks",
+			_("Exchange: clothes taken back on {0}").format(return_doc.name),
+		)
+
+	return {"name": return_doc.name, "amount": return_value, "give_back": max(give_back, 0)}
+
+
+def _default_cash_mode(pos_profile):
+	"""The profile's default mode of payment if it is cash, else its first cash mode."""
+	modes = frappe.get_all(
+		"POS Payment Method",
+		filters={"parent": pos_profile, "parenttype": "POS Profile"},
+		fields=["mode_of_payment", "default"],
+		order_by="idx",
+	)
+	cash = [
+		m for m in modes if frappe.get_cached_value("Mode of Payment", m.mode_of_payment, "type") == "Cash"
+	]
+	for m in cash:
+		if m.default:
+			return m.mode_of_payment
+	return cash[0].mode_of_payment if cash else None
 
 
 # ==========================================

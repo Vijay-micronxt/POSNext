@@ -357,6 +357,28 @@
 							style="min-width: 300px; contain: layout style paint"
 						>
 							<RfidTray v-if="rfidStore.enabled" />
+							<div
+								v-if="cartStore.exchange"
+								class="mx-2 mt-2 flex items-center gap-3 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2"
+							>
+								<FeatherIcon name="repeat" class="h-5 w-5 flex-shrink-0 text-amber-700" />
+								<div class="min-w-0 flex-1 text-start">
+									<p class="text-sm font-semibold text-amber-900">
+										{{ __("Exchange: {0} coming back", [formatCurrency(cartStore.exchange.total)]) }}
+									</p>
+									<p class="truncate text-xs text-amber-800">
+										{{ cartStore.exchange.items.map((i) => `${i.item_name} x ${i.qty}`).join(", ") }}
+									</p>
+								</div>
+								<button
+									type="button"
+									class="text-amber-700 hover:text-red-600"
+									:title="__('Cancel exchange')"
+									@click="cancelExchange"
+								>
+									<FeatherIcon name="x" class="h-4 w-4" />
+								</button>
+							</div>
 							<InvoiceCart
 								class="flex-1 min-h-0"
 								:items="cartStore.invoiceItems"
@@ -507,6 +529,7 @@
 				:target-doctype="cartStore.targetDoctype"
 				:is-submitting="cartStore.isSubmitting"
 				:applied-offer-count="cartStore.appliedOffers.length"
+				:exchange-amount="cartStore.exchange?.total || 0"
 				@payment-completed="handlePaymentCompleted"
 				@update-additional-discount="handleAdditionalDiscountUpdate"
 				@show-offers="uiStore.showOffersDialog = true"
@@ -549,6 +572,7 @@
 				:pos-opening-shift="shiftStore.currentShift?.name"
 				:currency="shiftStore.profileCurrency"
 				@return-created="handleReturnCreated"
+				@exchange-started="handleExchangeStarted"
 			/>
 
 			<!-- Coupon Dialog -->
@@ -1197,14 +1221,16 @@ import { offlineWorker } from "@/utils/offline/workerClient";
 import { cacheOfflineReceiptPayload } from "@/utils/offline/offlineReceiptCache";
 import { cacheInvoiceHistory, getCachedInvoiceHistory } from "@/utils/offline/sync";
 import {
+	closePrintWindow,
 	hydrateLocalOnlyInvoice,
+	openPrintWindow,
 	printInvoice,
 	printInvoiceByName,
 	printWithSilentFallback,
 } from "@/utils/printInvoice";
 import { qzConnected, connect as qzConnect, disconnect as qzDisconnect } from "@/utils/qzTray";
 
-import { Button, Dialog, createResource } from "frappe-ui";
+import { Button, Dialog, FeatherIcon, createResource } from "frappe-ui";
 import { call } from "@/utils/apiWrapper";
 import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import { useToast } from "@/composables/useToast";
@@ -2434,6 +2460,10 @@ async function handleProceedToPayment() {
 		showWarning(__("RFID counter needs a connection to complete the sale"));
 		return;
 	}
+	if (cartStore.exchange && offlineStore.isOffline) {
+		showWarning(__("An exchange needs a connection. Connect or cancel the exchange."));
+		return;
+	}
 	if (rfidStore.blocked) {
 		showWarning(__("A set on the tray is incomplete. Read the missing pieces or remove it."));
 		return;
@@ -2483,6 +2513,9 @@ async function handleErrorRetry() {
 }
 
 async function handlePaymentCompleted(paymentData) {
+	// Browser print: open the window now, while still inside the cashier's click.
+	// Opened after saving the bill (can take over 5 s) the browser blocks it.
+	let printWindow = null;
 	try {
 		const customerValue = cartStore.customer?.name || cartStore.customer;
 		if (!customerValue && !shiftStore.profileCustomer) {
@@ -2490,6 +2523,13 @@ async function handlePaymentCompleted(paymentData) {
 			uiStore.showPaymentDialog = false;
 			uiStore.showCustomerDialog = true;
 			return;
+		}
+		if (
+			shiftStore.autoPrintEnabled &&
+			!posSettingsStore.silentPrint &&
+			cartStore.targetDoctype !== "Sales Order"
+		) {
+			printWindow = openPrintWindow();
 		}
 
 		cartStore.payments = [];
@@ -2616,7 +2656,12 @@ async function handlePaymentCompleted(paymentData) {
 
 			if (shiftStore.autoPrintEnabled || posSettingsStore.silentPrint) {
 				try {
-					await handlePrintInvoice({ name: offlineReceiptName });
+					const usedWindow = printWindow;
+					printWindow = null;
+					await handlePrintInvoice(
+						{ name: offlineReceiptName },
+						{ printWindow: usedWindow, throwOnError: true }
+					);
 					showSuccess(
 						__(
 							"Invoice {0} saved offline and sent to printer — will sync when online",
@@ -2672,6 +2717,16 @@ async function handlePaymentCompleted(paymentData) {
 				}
 
 				const invoiceName = result.name || result.message?.name || __("Unknown");
+				const exchangeReturn = result.exchange_return || result.message?.exchange_return;
+				if (exchangeReturn?.give_back > 0) {
+					showWarning(
+						__("Give {0} back to the customer (return {1})", [
+							formatCurrency(exchangeReturn.give_back),
+							exchangeReturn.name,
+						]),
+						__("Exchange")
+					);
+				}
 				const invoiceTotal = result.grand_total || result.total || 0;
 				const paidAmount = paymentData.paid_amount || invoiceTotal;
 
@@ -2696,11 +2751,20 @@ async function handlePaymentCompleted(paymentData) {
 
 				if (shiftStore.autoPrintEnabled || posSettingsStore.silentPrint) {
 					try {
-						await handlePrintInvoice({ name: invoiceName });
+						const usedWindow = printWindow;
+						printWindow = null;
+						await handlePrintInvoice(
+							{ name: invoiceName },
+							{ printWindow: usedWindow, throwOnError: true }
+						);
 						showSuccess(__("Invoice {0} created and sent to printer", [invoiceName]));
 					} catch (error) {
 						log.error("Auto-print error:", error);
-						showWarning(__("Invoice {0} created but print failed", [invoiceName]));
+						// Keep the Print button at hand
+						uiStore.showSuccess(invoiceName, invoiceTotal, paidAmount);
+						showWarning(
+							__("Invoice {0} created but print failed — press Print Invoice", [invoiceName])
+						);
 					}
 				} else {
 					uiStore.showSuccess(invoiceName, invoiceTotal, paidAmount);
@@ -2731,6 +2795,8 @@ async function handlePaymentCompleted(paymentData) {
 		} else {
 			showWarning(errorContext.message);
 		}
+	} finally {
+		closePrintWindow(printWindow);
 	}
 }
 
@@ -2997,6 +3063,24 @@ async function restoreRfidTray(state) {
 		log.error("Could not restore the RFID tray of a held bill", error);
 		showWarning(__("The RFID tray of this bill could not be restored. Read its pieces on the tray again."));
 	}
+}
+
+// Exchange: clothes came back without a bill; the customer now picks other clothes.
+// They are returned together with this sale when it is paid.
+async function handleExchangeStarted(exchange) {
+	const defaultCustomer = shiftStore.profileCustomer;
+	const name = exchange.customer?.name;
+	if (name && name !== defaultCustomer) {
+		await cartStore.setCustomer(exchange.customer);
+	}
+	cartStore.exchange = exchange;
+	showSuccess(
+		__("Exchange of {0} started. Add the new clothes and checkout.", [formatCurrency(exchange.total)])
+	);
+}
+
+function cancelExchange() {
+	cartStore.exchange = null;
 }
 
 function handleReturnCreated(returnInvoice) {
@@ -3465,7 +3549,15 @@ function handleViewInvoice(invoice) {
 }
 
 // Centralized print handler - uses printInvoice.js utilities
-async function handlePrintInvoice(invoiceData) {
+/**
+ * Print a bill. Called from a click (Print buttons) or right after checkout with a
+ * window that checkout opened in advance. The window has to open inside the click:
+ * the browser blocks one opened seconds later, after the server calls below.
+ */
+async function handlePrintInvoice(invoiceData, { printWindow, throwOnError = false } = {}) {
+	if (printWindow === undefined) {
+		printWindow = posSettingsStore.silentPrint ? null : openPrintWindow();
+	}
 	try {
 		invoiceData = await hydrateLocalOnlyInvoice(invoiceData || {});
 		const offlineSnapshot = uiStore.lastOfflinePrintDoc;
@@ -3479,28 +3571,28 @@ async function handlePrintInvoice(invoiceData) {
 
 		// Silent print path — send directly to thermal printer via QZ Tray
 		if (posSettingsStore.silentPrint) {
-			const result = await printWithSilentFallback(invoiceData);
+			const result = await printWithSilentFallback(invoiceData, null, printWindow);
 			if (result.method === "browser") {
 				log.info("Used browser print fallback");
 			}
+			if (!result.success) throw new Error(__("Printer and browser print both failed"));
 			return;
 		}
 
 		// Standard browser print path
 		if (invoiceData.items && Array.isArray(invoiceData.items)) {
-			await printInvoice(invoiceData);
+			await printInvoice(invoiceData, null, null, printWindow);
 		} else {
 			// If it's just an invoice object with name, fetch and print
 			// printInvoiceByName will automatically fetch the print format from the invoice's POS Profile
-			await printInvoiceByName(invoiceData.name);
+			await printInvoiceByName(invoiceData.name, null, null, printWindow);
 		}
 	} catch (error) {
 		log.error("Error printing invoice:", error);
-		window.frappe?.msgprint({
-			title: "Error",
-			message: "Failed to print invoice",
-			indicator: "red",
-		});
+		closePrintWindow(printWindow);
+		if (throwOnError) throw error;
+		// window.frappe.msgprint does not exist on /pos: the error used to vanish
+		showError(error?.message || __("Failed to print invoice"));
 	}
 }
 

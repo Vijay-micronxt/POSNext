@@ -448,6 +448,20 @@
 						</template>
 					</div>
 
+					<!-- Exchange: clothes taken back pay this bill -->
+					<div
+						v-if="exchangeAmount > 0"
+						class="rounded-lg border border-amber-300 bg-amber-50 p-2 text-start"
+					>
+						<div class="flex items-center justify-between text-sm">
+							<span class="font-semibold text-amber-900">{{ __("Exchange (clothes taken back)") }}</span>
+							<span class="font-bold text-amber-900">- {{ formatCurrency(exchangeApplied) }}</span>
+						</div>
+						<p v-if="exchangeGiveBack > 0" class="mt-1 text-xs font-semibold text-red-700">
+							{{ __("Give {0} back to the customer", [formatCurrency(exchangeGiveBack)]) }}
+						</p>
+					</div>
+
 					<!-- Outstanding Balance Row (full width, two columns) -->
 					<div
 						v-if="customerCreditEnabled && totalAvailableCredit !== 0"
@@ -2132,6 +2146,11 @@ const { showWarning, showInfo } = useToast();
 
 const props = defineProps({
 	modelValue: Boolean,
+	/** Value of clothes taken back in an exchange; it pays (part of) this bill. */
+	exchangeAmount: {
+		type: Number,
+		default: 0,
+	},
 	grandTotal: {
 		type: Number,
 		default: 0,
@@ -3087,6 +3106,7 @@ watch(show, (newVal) => {
 		lastSelectedMethod.value = null;
 		selectedReceivableAccount.value = "";
 		customerCredit.value = [];
+		applyExchange();
 		// Refetch credit sources every time the dialog opens. The pre-fetch
 		// watcher only fires when customer/company changes, so reopening the
 		// dialog for the same customer would otherwise leave credit_details
@@ -3537,7 +3557,36 @@ function addCreditAccountPayment() {
 function clearAll() {
 	paymentEntries.value = [];
 	customAmount.value = "";
+	applyExchange();
 }
+
+// Exchange: the returned clothes pay up to the whole bill. It is not a mode of
+// payment; the server returns the clothes and settles the bill with them.
+const exchangeApplied = computed(() =>
+	roundCurrency(Math.min(props.exchangeAmount || 0, roundCurrency(props.grandTotal)))
+);
+const exchangeGiveBack = computed(() =>
+	roundCurrency(Math.max((props.exchangeAmount || 0) - roundCurrency(props.grandTotal), 0))
+);
+
+function applyExchange() {
+	paymentEntries.value = paymentEntries.value.filter((e) => !e.is_exchange);
+	if (exchangeApplied.value <= 0) return;
+	paymentEntries.value.unshift({
+		mode_of_payment: __("Exchange"),
+		amount: exchangeApplied.value,
+		type: "Exchange",
+		is_exchange: true,
+	});
+}
+
+// The bill can change while the dialog is open (additional discount)
+watch(
+	() => [props.grandTotal, props.exchangeAmount],
+	() => {
+		if (show.value) applyExchange();
+	}
+);
 
 async function completePayment() {
 	log.debug("[PaymentDialog] Complete payment called:", {
