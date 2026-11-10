@@ -399,7 +399,52 @@ async function resolvePrintSettings(posProfile, printFormat, letterhead) {
  * The page includes trigger_print=1 so the OS print dialog appears automatically.
  * Falls back to the hardcoded receipt template if the popup is blocked.
  */
-export async function printInvoice(invoiceData, printFormat = null, letterhead = null) {
+/**
+ * Open the print window straight away, inside the cashier's click.
+ *
+ * Browsers block a popup that opens more than about 5 seconds after the click.
+ * Checkout saves the bill, refreshes stock and loads the print settings before
+ * printing, which on a slow server takes longer than that: the print window
+ * was blocked and nothing printed. Opening it first and loading the receipt
+ * into it later keeps it allowed. Returns null when the browser blocks it.
+ */
+export function openPrintWindow() {
+	try {
+		const win = window.open("", "_blank", "width=800,height=600");
+		if (!win) return null;
+		win.document.write(
+			'<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Receipt</title></head>' +
+				'<body style="font-family:sans-serif;color:#555;padding:24px">' +
+				__("Preparing receipt...") +
+				"</body></html>"
+		);
+		win.document.close();
+		return win;
+	} catch (err) {
+		log.warn("Could not open print window:", err);
+		return null;
+	}
+}
+
+/** Close a print window opened in advance that ended up not being used. */
+export function closePrintWindow(win) {
+	try {
+		if (win && !win.closed) win.close();
+	} catch {
+		// window already gone
+	}
+}
+
+function usableWindow(win) {
+	return win && !win.closed ? win : null;
+}
+
+export async function printInvoice(
+	invoiceData,
+	printFormat = null,
+	letterhead = null,
+	printWindow = null
+) {
 	try {
 		if (!invoiceData?.name) throw new Error("Invalid invoice data");
 
@@ -407,7 +452,7 @@ export async function printInvoice(invoiceData, printFormat = null, letterhead =
 
 		// Pending offline / local IDs are not in ERPNext — use embedded receipt HTML.
 		if (isLocalOnlyInvoiceName(invoiceData.name)) {
-			if (invoiceData.items?.length > 0) return printInvoiceCustom(invoiceData);
+			if (invoiceData.items?.length > 0) return printInvoiceCustom(invoiceData, printWindow);
 			throw new Error(
 				__(
 					"This offline receipt is no longer in browser storage. Sync the invoice, then print from history."
@@ -429,8 +474,13 @@ export async function printInvoice(invoiceData, printFormat = null, letterhead =
 		});
 		if (letterhead) params.append("letterhead", letterhead);
 
-		const printWindow = window.open(`/printview?${params}`, "_blank", "width=800,height=600");
-		if (!printWindow) {
+		const url = `/printview?${params}`;
+		const opened = usableWindow(printWindow);
+		if (opened) {
+			opened.location.href = url;
+			return true;
+		}
+		if (!window.open(url, "_blank", "width=800,height=600")) {
 			throw new Error("Popup blocked — check your browser settings.");
 		}
 		return true;
@@ -439,7 +489,7 @@ export async function printInvoice(invoiceData, printFormat = null, letterhead =
 		if (isLocalOnlyInvoiceName(invoiceData?.name) && !(invoiceData.items?.length > 0)) {
 			throw error;
 		}
-		return printInvoiceCustom(invoiceData);
+		return printInvoiceCustom(invoiceData, printWindow);
 	}
 }
 
@@ -447,7 +497,12 @@ export async function printInvoice(invoiceData, printFormat = null, letterhead =
  * Fetch an invoice by name, resolve its POS Profile print settings,
  * then open the browser print window.
  */
-export async function printInvoiceByName(invoiceName, printFormat = null, letterhead = null) {
+export async function printInvoiceByName(
+	invoiceName,
+	printFormat = null,
+	letterhead = null,
+	printWindow = null
+) {
 	if (isLocalOnlyInvoiceName(invoiceName)) {
 		const localDoc = await hydrateLocalOnlyInvoice({ name: invoiceName });
 		if (!localDoc.items?.length) {
@@ -458,7 +513,7 @@ export async function printInvoiceByName(invoiceName, printFormat = null, letter
 			);
 		}
 		const settings = await resolvePrintSettings(localDoc.pos_profile, printFormat, letterhead);
-		return printInvoice(localDoc, settings.printFormat, settings.letterhead);
+		return printInvoice(localDoc, settings.printFormat, settings.letterhead, printWindow);
 	}
 	const invoiceDoc = await call("pos_next.api.invoices.get_invoice", {
 		invoice_name: invoiceName,
@@ -466,7 +521,7 @@ export async function printInvoiceByName(invoiceName, printFormat = null, letter
 	if (!invoiceDoc) throw new Error("Invoice not found");
 
 	const settings = await resolvePrintSettings(invoiceDoc.pos_profile, printFormat, letterhead);
-	return printInvoice(invoiceDoc, settings.printFormat, settings.letterhead);
+	return printInvoice(invoiceDoc, settings.printFormat, settings.letterhead, printWindow);
 }
 
 // ============================================================================
@@ -536,7 +591,7 @@ export async function silentPrintInvoiceFromDoc(invoiceData) {
  * silentPrintInvoice → qzPrintHTML → connect() handles auto-reconnect
  * internally, so no separate connection logic is needed here.
  */
-export async function printWithSilentFallback(invoiceData, printFormat = null) {
+export async function printWithSilentFallback(invoiceData, printFormat = null, printWindow = null) {
 	invoiceData = await hydrateLocalOnlyInvoice(invoiceData);
 	const invoiceName = invoiceData?.name;
 	if (!invoiceName) throw new Error("Invalid invoice data — missing name");
@@ -544,12 +599,13 @@ export async function printWithSilentFallback(invoiceData, printFormat = null) {
 	if (isLocalOnlyInvoiceName(invoiceName) && invoiceData.items?.length > 0) {
 		try {
 			await silentPrintInvoiceFromDoc(invoiceData);
+			closePrintWindow(printWindow);
 			return { method: "silent", success: true };
 		} catch (err) {
 			log.warn("Silent local receipt failed, falling back to browser:", err?.message || err);
 		}
 		try {
-			printInvoiceCustom(invoiceData);
+			printInvoiceCustom(invoiceData, printWindow);
 			return { method: "browser", success: true };
 		} catch (err) {
 			log.error("Browser print for local receipt failed:", err);
@@ -559,13 +615,14 @@ export async function printWithSilentFallback(invoiceData, printFormat = null) {
 
 	try {
 		await silentPrintInvoice(invoiceName, printFormat);
+		closePrintWindow(printWindow);
 		return { method: "silent", success: true };
 	} catch (err) {
 		log.warn("Silent print failed, falling back to browser:", err?.message || err);
 	}
 
 	try {
-		await printInvoiceByName(invoiceName, printFormat);
+		await printInvoiceByName(invoiceName, printFormat, null, printWindow);
 		return { method: "browser", success: true };
 	} catch (err) {
 		log.error("Browser print fallback also failed:", err);
@@ -581,8 +638,9 @@ export async function printWithSilentFallback(invoiceData, printFormat = null) {
  * Renders the receipt locally in a popup window. Used offline, for pending
  * local-only invoices, and as the fallback when /printview is unavailable.
  */
-export function printInvoiceCustom(invoiceData) {
-	const printWindow = window.open("", "_blank", "width=350,height=600");
+export function printInvoiceCustom(invoiceData, targetWindow = null) {
+	const reused = usableWindow(targetWindow);
+	const printWindow = reused || window.open("", "_blank", "width=350,height=600");
 	if (!printWindow) {
 		log.error("Cannot open print window — popup blocked.");
 		throw new Error(__("Popup blocked — check your browser settings."));
@@ -590,11 +648,17 @@ export function printInvoiceCustom(invoiceData) {
 
 	const printContent = buildReceiptDocumentHTML(invoiceData, { includeControls: true });
 
+	printWindow.document.open();
 	printWindow.document.write(printContent);
 	printWindow.document.close();
-	printWindow.onload = () => {
-		setTimeout(() => printWindow.print(), 250);
-	};
+	if (reused) {
+		// A window that already holds a page does not fire load again
+		setTimeout(() => printWindow.print(), 400);
+	} else {
+		printWindow.onload = () => {
+			setTimeout(() => printWindow.print(), 250);
+		};
+	}
 	flagOfflineInvoicePrinted(invoiceData?.name);
 	return true;
 }
