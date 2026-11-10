@@ -1197,7 +1197,9 @@ import { offlineWorker } from "@/utils/offline/workerClient";
 import { cacheOfflineReceiptPayload } from "@/utils/offline/offlineReceiptCache";
 import { cacheInvoiceHistory, getCachedInvoiceHistory } from "@/utils/offline/sync";
 import {
+	closePrintWindow,
 	hydrateLocalOnlyInvoice,
+	openPrintWindow,
 	printInvoice,
 	printInvoiceByName,
 	printWithSilentFallback,
@@ -2483,6 +2485,9 @@ async function handleErrorRetry() {
 }
 
 async function handlePaymentCompleted(paymentData) {
+	// Browser print: open the window now, while still inside the cashier's click.
+	// Opened after saving the bill (can take over 5 s) the browser blocks it.
+	let printWindow = null;
 	try {
 		const customerValue = cartStore.customer?.name || cartStore.customer;
 		if (!customerValue && !shiftStore.profileCustomer) {
@@ -2490,6 +2495,13 @@ async function handlePaymentCompleted(paymentData) {
 			uiStore.showPaymentDialog = false;
 			uiStore.showCustomerDialog = true;
 			return;
+		}
+		if (
+			shiftStore.autoPrintEnabled &&
+			!posSettingsStore.silentPrint &&
+			cartStore.targetDoctype !== "Sales Order"
+		) {
+			printWindow = openPrintWindow();
 		}
 
 		cartStore.payments = [];
@@ -2616,7 +2628,12 @@ async function handlePaymentCompleted(paymentData) {
 
 			if (shiftStore.autoPrintEnabled || posSettingsStore.silentPrint) {
 				try {
-					await handlePrintInvoice({ name: offlineReceiptName });
+					const usedWindow = printWindow;
+					printWindow = null;
+					await handlePrintInvoice(
+						{ name: offlineReceiptName },
+						{ printWindow: usedWindow, throwOnError: true }
+					);
 					showSuccess(
 						__(
 							"Invoice {0} saved offline and sent to printer — will sync when online",
@@ -2696,11 +2713,20 @@ async function handlePaymentCompleted(paymentData) {
 
 				if (shiftStore.autoPrintEnabled || posSettingsStore.silentPrint) {
 					try {
-						await handlePrintInvoice({ name: invoiceName });
+						const usedWindow = printWindow;
+						printWindow = null;
+						await handlePrintInvoice(
+							{ name: invoiceName },
+							{ printWindow: usedWindow, throwOnError: true }
+						);
 						showSuccess(__("Invoice {0} created and sent to printer", [invoiceName]));
 					} catch (error) {
 						log.error("Auto-print error:", error);
-						showWarning(__("Invoice {0} created but print failed", [invoiceName]));
+						// Keep the Print button at hand
+						uiStore.showSuccess(invoiceName, invoiceTotal, paidAmount);
+						showWarning(
+							__("Invoice {0} created but print failed — press Print Invoice", [invoiceName])
+						);
 					}
 				} else {
 					uiStore.showSuccess(invoiceName, invoiceTotal, paidAmount);
@@ -2731,6 +2757,8 @@ async function handlePaymentCompleted(paymentData) {
 		} else {
 			showWarning(errorContext.message);
 		}
+	} finally {
+		closePrintWindow(printWindow);
 	}
 }
 
@@ -3465,7 +3493,15 @@ function handleViewInvoice(invoice) {
 }
 
 // Centralized print handler - uses printInvoice.js utilities
-async function handlePrintInvoice(invoiceData) {
+/**
+ * Print a bill. Called from a click (Print buttons) or right after checkout with a
+ * window that checkout opened in advance. The window has to open inside the click:
+ * the browser blocks one opened seconds later, after the server calls below.
+ */
+async function handlePrintInvoice(invoiceData, { printWindow, throwOnError = false } = {}) {
+	if (printWindow === undefined) {
+		printWindow = posSettingsStore.silentPrint ? null : openPrintWindow();
+	}
 	try {
 		invoiceData = await hydrateLocalOnlyInvoice(invoiceData || {});
 		const offlineSnapshot = uiStore.lastOfflinePrintDoc;
@@ -3479,28 +3515,28 @@ async function handlePrintInvoice(invoiceData) {
 
 		// Silent print path — send directly to thermal printer via QZ Tray
 		if (posSettingsStore.silentPrint) {
-			const result = await printWithSilentFallback(invoiceData);
+			const result = await printWithSilentFallback(invoiceData, null, printWindow);
 			if (result.method === "browser") {
 				log.info("Used browser print fallback");
 			}
+			if (!result.success) throw new Error(__("Printer and browser print both failed"));
 			return;
 		}
 
 		// Standard browser print path
 		if (invoiceData.items && Array.isArray(invoiceData.items)) {
-			await printInvoice(invoiceData);
+			await printInvoice(invoiceData, null, null, printWindow);
 		} else {
 			// If it's just an invoice object with name, fetch and print
 			// printInvoiceByName will automatically fetch the print format from the invoice's POS Profile
-			await printInvoiceByName(invoiceData.name);
+			await printInvoiceByName(invoiceData.name, null, null, printWindow);
 		}
 	} catch (error) {
 		log.error("Error printing invoice:", error);
-		window.frappe?.msgprint({
-			title: "Error",
-			message: "Failed to print invoice",
-			indicator: "red",
-		});
+		closePrintWindow(printWindow);
+		if (throwOnError) throw error;
+		// window.frappe.msgprint does not exist on /pos: the error used to vanish
+		showError(error?.message || __("Failed to print invoice"));
 	}
 }
 
