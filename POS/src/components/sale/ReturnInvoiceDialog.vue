@@ -172,6 +172,15 @@
 						>
 							<FeatherIcon name="refresh-cw" class="w-4 h-4" />
 						</Button>
+						<Button
+							v-if="settingsStore.allowReturnWithoutInvoice"
+							variant="outline"
+							:disabled="isOffline"
+							@click="showWithoutInvoice = true"
+						>
+							<template #prefix><FeatherIcon name="file-minus" class="w-4 h-4" /></template>
+							<span class="text-sm whitespace-nowrap">{{ __("No Invoice") }}</span>
+						</Button>
 					</div>
 
 					<!-- Loading State - Skeleton Loader -->
@@ -1135,6 +1144,15 @@
 		</template>
 	</Dialog>
 
+	<!-- Return of items whose customer has no bill -->
+	<ReturnWithoutInvoiceDialog
+		v-model="showWithoutInvoice"
+		:pos-profile="posProfile"
+		:pos-opening-shift="posOpeningShift"
+		:currency="currency"
+		@return-created="onReturnWithoutInvoice"
+	/>
+
 	<!-- Error Dialog -->
 	<Dialog v-model="errorDialog.visible" :options="{ title: errorDialog.title, size: 'sm' }">
 		<template #body-content>
@@ -1234,6 +1252,7 @@ import {
 	roundCurrency,
 } from "@/utils/currency";
 import { getInvoiceStatusColor } from "@/utils/invoice";
+import ReturnWithoutInvoiceDialog from "./ReturnWithoutInvoiceDialog.vue";
 import { Button, Dialog, FeatherIcon, createResource } from "frappe-ui";
 import { computed, onMounted, onUnmounted, reactive, ref, watch } from "vue";
 
@@ -1291,6 +1310,14 @@ const addToCustomerCredit = ref(false);
 const invoiceSearchInput = ref(null);
 const showSuggestions = ref(false);
 const selectedSuggestionIndex = ref(-1);
+
+// Return without invoice dialog
+const showWithoutInvoice = ref(false);
+
+function onReturnWithoutInvoice(data) {
+	emit("return-created", data);
+	showDialog.value = false;
+}
 
 // Invoice payment tracking
 const isOriginalCreditSale = ref(false);

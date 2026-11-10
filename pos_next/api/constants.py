@@ -30,6 +30,7 @@ POS_SETTINGS_FIELDS = [
 	"apply_customer_credit_by_default",
 	"allow_return",
 	"return_to_credit_by_default",
+	"allow_return_without_invoice",
 	"allow_partial_payment",
 	"use_exact_amount",
 	"decimal_precision",
@@ -64,6 +65,7 @@ DEFAULT_POS_SETTINGS = {
 	"apply_customer_credit_by_default": 0,
 	"allow_return": 0,
 	"return_to_credit_by_default": 0,
+	"allow_return_without_invoice": 0,
 	"allow_write_off_change": 0,  # Derived from POS Profile
 	"allow_partial_payment": 0,
 	"use_exact_amount": 0,

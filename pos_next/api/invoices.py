@@ -768,6 +768,14 @@ def update_invoice(data):
 			)
 			if not validation.get("valid"):
 				frappe.throw(validation.get("message"))
+		elif cint(invoice_doc.get("is_return")) and doctype == "Sales Invoice" and pos_profile:
+			# A return with no original bill is only allowed when POS Settings say so.
+			if not cint(
+				frappe.db.get_value(
+					DOCTYPE_POS_SETTINGS, {"pos_profile": pos_profile}, "allow_return_without_invoice"
+				)
+			):
+				frappe.throw(_("Returns without an invoice are not enabled for this POS Profile."))
 
 		# Ensure customer exists
 		customer_name = invoice_doc.get("customer")
@@ -987,6 +995,12 @@ def update_invoice(data):
 		if invoice_doc.get("is_return"):
 			# Return handling is primarily for Sales Invoice
 			if doctype == "Sales Invoice" and invoice_doc.get("payments"):
+				# Return without an invoice: the till cannot know the tax and rounding the
+				# server adds, so a single refund row pays back exactly the return total.
+				if not invoice_doc.get("return_against") and len(invoice_doc.payments) == 1:
+					refund = flt(invoice_doc.rounded_total) or flt(invoice_doc.grand_total)
+					invoice_doc.payments[0].amount = refund
+					invoice_doc.payments[0].base_amount = flt(refund * flt(invoice_doc.conversion_rate or 1))
 				for payment in invoice_doc.payments:
 					payment.amount = -abs(payment.amount)
 					if payment.base_amount:
