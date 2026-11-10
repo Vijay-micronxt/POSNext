@@ -139,30 +139,30 @@
 					</div>
 				</div>
 
-				<!-- Refund -->
+				<!-- What the customer gets for the clothes -->
 				<div v-if="rows.length">
-					<div class="rounded-xl border border-emerald-200 bg-emerald-50 p-4 mb-3">
-						<label class="flex items-start gap-3" :class="canUseCredit ? 'cursor-pointer' : 'opacity-60'">
-							<input
-								v-model="addToCustomerCredit"
-								type="checkbox"
-								:disabled="!canUseCredit"
-								class="mt-0.5 w-5 h-5 rounded border-emerald-300 text-emerald-600"
-							/>
-							<div>
-								<span class="text-sm font-bold text-emerald-900">{{ __("Add to Customer Credit Balance") }}</span>
-								<p class="text-xs text-emerald-700 mt-1">
-									{{
-										canUseCredit
-											? __("No money is paid back now; the customer can use it on a later bill.")
-											: __("Pick a named customer to give credit. Walk-in customers get a refund.")
-									}}
-								</p>
-							</div>
-						</label>
+					<label class="block text-sm font-medium text-gray-700 mb-2">{{ __("Customer Gets") }}</label>
+					<div class="grid grid-cols-1 sm:grid-cols-3 gap-2 mb-3">
+						<button
+							v-for="opt in settleOptions"
+							:key="opt.value"
+							type="button"
+							:disabled="opt.disabled"
+							class="rounded-xl border-2 p-3 text-start transition-colors"
+							:class="[
+								settle === opt.value ? 'border-blue-500 bg-blue-50' : 'border-gray-200 bg-white hover:border-blue-300',
+								opt.disabled ? 'opacity-50 cursor-not-allowed' : '',
+							]"
+							@click="settle = opt.value"
+						>
+							<span class="block text-sm font-bold text-gray-900">{{ opt.label }}</span>
+							<span class="block text-xs text-gray-600 mt-1">{{ opt.hint }}</span>
+						</button>
 					</div>
-					<div v-if="!addToCustomerCredit">
-						<label class="block text-sm font-medium text-gray-700 mb-2">{{ __("Refund Mode") }}</label>
+					<div v-if="settle !== 'credit'">
+						<label class="block text-sm font-medium text-gray-700 mb-2">
+							{{ settle === "exchange" ? __("If the new clothes cost less, give the rest back by") : __("Refund Mode") }}
+						</label>
 						<div class="flex flex-wrap gap-2">
 							<button
 								v-for="m in paymentMethods"
@@ -193,7 +193,7 @@
 
 				<div v-if="rows.length" class="flex items-center justify-between rounded-xl bg-gray-50 px-4 py-3">
 					<span class="text-sm text-gray-700">
-						{{ addToCustomerCredit ? __("Amount to Credit:") : __("Refund Amount:") }}
+						{{ totalLabel }}
 						<span v-if="!taxInclusive" class="text-xs text-gray-500">({{ __("plus tax") }})</span>
 					</span>
 					<span class="text-lg font-bold text-gray-900">{{ formatCurrency(returnTotal) }}</span>
@@ -210,9 +210,9 @@
 						theme="red"
 						:disabled="!canSubmit || submitResource.loading"
 						:loading="submitResource.loading"
-						@click="submitResource.submit()"
+						@click="handleSubmit"
 					>
-						{{ __("Create Return") }}
+						{{ settle === "exchange" ? __("Add New Clothes") : __("Create Return") }}
 					</Button>
 				</div>
 			</div>
@@ -235,7 +235,7 @@ const props = defineProps({
 	posOpeningShift: String,
 	currency: { type: String, default: DEFAULT_CURRENCY },
 });
-const emit = defineEmits(["update:modelValue", "return-created"]);
+const emit = defineEmits(["update:modelValue", "return-created", "exchange-started"]);
 
 const showDialog = computed({
 	get: () => props.modelValue,
@@ -264,7 +264,9 @@ const itemInput = ref(null);
 const rows = ref([]);
 const paymentMethods = ref([]);
 const refundMode = ref("");
-const addToCustomerCredit = ref(false);
+// refund | credit | exchange (customer takes other clothes for it)
+const settle = ref("refund");
+const addToCustomerCredit = computed(() => settle.value === "credit");
 const reason = ref("");
 
 let customerTimer = null;
@@ -283,6 +285,32 @@ const canUseCredit = computed(
 const returnTotal = computed(() =>
 	roundCurrency(rows.value.reduce((sum, r) => sum + roundCurrency((r.qty || 0) * (r.rate || 0)), 0))
 );
+
+const settleOptions = computed(() => [
+	{
+		value: "exchange",
+		label: __("Other Clothes"),
+		hint: __("Exchange: value goes to the new bill, customer pays or gets back the difference."),
+	},
+	{
+		value: "refund",
+		label: __("Money Back"),
+		hint: __("Pay the amount back now."),
+	},
+	{
+		value: "credit",
+		label: __("Customer Credit"),
+		hint: canUseCredit.value
+			? __("Keep it for a later bill.")
+			: __("Pick a named customer to give credit."),
+		disabled: !canUseCredit.value,
+	},
+]);
+
+const totalLabel = computed(() => {
+	if (settle.value === "exchange") return __("Exchange Value:");
+	return addToCustomerCredit.value ? __("Amount to Credit:") : __("Refund Amount:");
+});
 
 const canSubmit = computed(
 	() =>
@@ -310,7 +338,7 @@ function resetForm() {
 	itemSearched.value = false;
 	rows.value = [];
 	reason.value = "";
-	addToCustomerCredit.value = false;
+	settle.value = "refund";
 	refundMode.value = paymentMethods.value.find((m) => m.default)?.mode_of_payment
 		|| paymentMethods.value[0]?.mode_of_payment
 		|| "";
@@ -369,7 +397,10 @@ function pickCustomer(c) {
 	customer.value = c;
 	editingCustomer.value = false;
 	customerResults.value = [];
-	addToCustomerCredit.value = settingsStore.returnToCreditByDefault && canUseCredit.value;
+	if (settle.value === "credit" && !canUseCredit.value) settle.value = "refund";
+	else if (settle.value === "refund" && settingsStore.returnToCreditByDefault && canUseCredit.value) {
+		settle.value = "credit";
+	}
 }
 
 // Item search
@@ -449,6 +480,31 @@ function normalizeQty(row) {
 
 function normalizeRate(row) {
 	row.rate = Math.max(0, roundCurrency(Number(row.rate) || 0));
+}
+
+function handleSubmit() {
+	if (settle.value !== "exchange") {
+		submitResource.submit();
+		return;
+	}
+	// Nothing is saved yet: the clothes ride with the cart and are returned with the sale
+	emit("exchange-started", {
+		customer: customer.value,
+		total: returnTotal.value,
+		reason: reason.value.trim(),
+		refund_mode: refundMode.value,
+		items: rows.value.map((r) => ({
+			item_code: r.item_code,
+			item_name: r.item_name,
+			qty: r.qty,
+			rate: r.rate,
+			price_list_rate: Math.max(r.price_list_rate, r.rate),
+			warehouse: r.warehouse,
+			uom: r.uom,
+			conversion_factor: r.conversion_factor,
+		})),
+	});
+	showDialog.value = false;
 }
 
 const submitResource = createResource({

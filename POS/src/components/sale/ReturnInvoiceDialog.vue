@@ -1151,6 +1151,7 @@
 		:pos-opening-shift="posOpeningShift"
 		:currency="currency"
 		@return-created="onReturnWithoutInvoice"
+		@exchange-started="onExchangeStarted"
 	/>
 
 	<!-- Error Dialog -->
@@ -1278,7 +1279,7 @@ const props = defineProps({
 	preselectedInvoice: { type: Object, default: null },
 });
 
-const emit = defineEmits(["update:modelValue", "return-created"]);
+const emit = defineEmits(["update:modelValue", "return-created", "exchange-started"]);
 
 // Computed getter/setter for v-model pattern (per codebase standard)
 const showDialog = computed({
@@ -1316,6 +1317,11 @@ const showWithoutInvoice = ref(false);
 
 function onReturnWithoutInvoice(data) {
 	emit("return-created", data);
+	showDialog.value = false;
+}
+
+function onExchangeStarted(data) {
+	emit("exchange-started", data);
 	showDialog.value = false;
 }
 

@@ -44,6 +44,9 @@ export function useInvoice() {
 	// Extra header fields an optional module wants on the invoice (e.g. the RFID
 	// counter's basket). Merged into the payload; empty for a plain POS.
 	const invoiceExtras = ref({});
+	// Exchange: clothes brought back without a bill that pay for this sale
+	// ({ customer, items, total, reason, refund_mode }). Settled on the server with the sale.
+	const exchange = ref(null);
 
 	// Performance: Incrementally maintained aggregates (updated on add/remove/change)
 	// This avoids O(n) array reductions on every reactive change
@@ -1094,7 +1097,7 @@ export function useInvoice() {
 
 	function serializeInvoicePayments(rawPayments) {
 		return rawPayments
-			.filter((payment) => !payment?.is_customer_credit)
+			.filter((payment) => !payment?.is_customer_credit && !payment?.is_exchange)
 			.map((payment) => ({
 				mode_of_payment: payment.mode_of_payment,
 				amount: payment.amount,
@@ -1289,6 +1292,14 @@ export function useInvoice() {
 				if (isCreditSale && invoicePayments.length === 0) {
 					submitData.is_credit_sale = 1;
 				}
+				if (exchange.value?.items?.length && targetDoctype === "Sales Invoice") {
+					const ex = toRaw(exchange.value);
+					submitData.exchange = {
+						items: ex.items,
+						reason: ex.reason,
+						refund_mode: ex.refund_mode || null,
+					};
+				}
 
 				try {
 					const result = await submitInvoiceResource.submit({
@@ -1403,6 +1414,7 @@ export function useInvoice() {
 	function resetInvoice() {
 		invoiceItems.value = [];
 		payments.value = [];
+		exchange.value = null;
 		additionalDiscount.value = 0;
 		couponCode.value = null;
 		manualBillDiscount.value = null;
@@ -1422,6 +1434,7 @@ export function useInvoice() {
 	 * If a POS Profile is active and has a default customer, it will be pre-selected.
 	 */
 	async function clearCart() {
+		exchange.value = null;
 		// Return all serial numbers back to cache before clearing
 		for (const item of invoiceItems.value) {
 			if (item.has_serial_no && item.serial_no) {
@@ -1526,6 +1539,7 @@ export function useInvoice() {
 		itemTaxTemplates,
 		isSubmitting,
 		invoiceExtras,
+		exchange,
 
 		// Computed
 		subtotal,

@@ -357,6 +357,28 @@
 							style="min-width: 300px; contain: layout style paint"
 						>
 							<RfidTray v-if="rfidStore.enabled" />
+							<div
+								v-if="cartStore.exchange"
+								class="mx-2 mt-2 flex items-center gap-3 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2"
+							>
+								<FeatherIcon name="repeat" class="h-5 w-5 flex-shrink-0 text-amber-700" />
+								<div class="min-w-0 flex-1 text-start">
+									<p class="text-sm font-semibold text-amber-900">
+										{{ __("Exchange: {0} coming back", [formatCurrency(cartStore.exchange.total)]) }}
+									</p>
+									<p class="truncate text-xs text-amber-800">
+										{{ cartStore.exchange.items.map((i) => `${i.item_name} x ${i.qty}`).join(", ") }}
+									</p>
+								</div>
+								<button
+									type="button"
+									class="text-amber-700 hover:text-red-600"
+									:title="__('Cancel exchange')"
+									@click="cancelExchange"
+								>
+									<FeatherIcon name="x" class="h-4 w-4" />
+								</button>
+							</div>
 							<InvoiceCart
 								class="flex-1 min-h-0"
 								:items="cartStore.invoiceItems"
@@ -507,6 +529,7 @@
 				:target-doctype="cartStore.targetDoctype"
 				:is-submitting="cartStore.isSubmitting"
 				:applied-offer-count="cartStore.appliedOffers.length"
+				:exchange-amount="cartStore.exchange?.total || 0"
 				@payment-completed="handlePaymentCompleted"
 				@update-additional-discount="handleAdditionalDiscountUpdate"
 				@show-offers="uiStore.showOffersDialog = true"
@@ -549,6 +572,7 @@
 				:pos-opening-shift="shiftStore.currentShift?.name"
 				:currency="shiftStore.profileCurrency"
 				@return-created="handleReturnCreated"
+				@exchange-started="handleExchangeStarted"
 			/>
 
 			<!-- Coupon Dialog -->
@@ -1204,7 +1228,7 @@ import {
 } from "@/utils/printInvoice";
 import { qzConnected, connect as qzConnect, disconnect as qzDisconnect } from "@/utils/qzTray";
 
-import { Button, Dialog, createResource } from "frappe-ui";
+import { Button, Dialog, FeatherIcon, createResource } from "frappe-ui";
 import { call } from "@/utils/apiWrapper";
 import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import { useToast } from "@/composables/useToast";
@@ -2434,6 +2458,10 @@ async function handleProceedToPayment() {
 		showWarning(__("RFID counter needs a connection to complete the sale"));
 		return;
 	}
+	if (cartStore.exchange && offlineStore.isOffline) {
+		showWarning(__("An exchange needs a connection. Connect or cancel the exchange."));
+		return;
+	}
 	if (rfidStore.blocked) {
 		showWarning(__("A set on the tray is incomplete. Read the missing pieces or remove it."));
 		return;
@@ -2672,6 +2700,16 @@ async function handlePaymentCompleted(paymentData) {
 				}
 
 				const invoiceName = result.name || result.message?.name || __("Unknown");
+				const exchangeReturn = result.exchange_return || result.message?.exchange_return;
+				if (exchangeReturn?.give_back > 0) {
+					showWarning(
+						__("Give {0} back to the customer (return {1})", [
+							formatCurrency(exchangeReturn.give_back),
+							exchangeReturn.name,
+						]),
+						__("Exchange")
+					);
+				}
 				const invoiceTotal = result.grand_total || result.total || 0;
 				const paidAmount = paymentData.paid_amount || invoiceTotal;
 
@@ -2997,6 +3035,24 @@ async function restoreRfidTray(state) {
 		log.error("Could not restore the RFID tray of a held bill", error);
 		showWarning(__("The RFID tray of this bill could not be restored. Read its pieces on the tray again."));
 	}
+}
+
+// Exchange: clothes came back without a bill; the customer now picks other clothes.
+// They are returned together with this sale when it is paid.
+async function handleExchangeStarted(exchange) {
+	const defaultCustomer = shiftStore.profileCustomer;
+	const name = exchange.customer?.name;
+	if (name && name !== defaultCustomer) {
+		await cartStore.setCustomer(exchange.customer);
+	}
+	cartStore.exchange = exchange;
+	showSuccess(
+		__("Exchange of {0} started. Add the new clothes and checkout.", [formatCurrency(exchange.total)])
+	);
+}
+
+function cancelExchange() {
+	cartStore.exchange = null;
 }
 
 function handleReturnCreated(returnInvoice) {
