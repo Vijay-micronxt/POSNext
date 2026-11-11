@@ -187,7 +187,7 @@
 				<!-- Reason -->
 				<div v-if="rows.length">
 					<label class="block text-sm font-medium text-gray-700 mb-2">
-						{{ __("Return Reason") }} <span class="text-red-500">*</span>
+						{{ __("Return Reason") }} <span class="text-xs font-normal text-gray-400">({{ __("optional") }})</span>
 					</label>
 					<textarea
 						v-model="reason"
@@ -336,7 +336,6 @@ const canSubmit = computed(
 		Boolean(customer.value?.name) &&
 		rows.value.length > 0 &&
 		rows.value.every((r) => r.qty > 0 && r.rate > 0) &&
-		reason.value.trim().length > 0 &&
 		(addToCustomerCredit.value || Boolean(refundMode.value))
 );
 
@@ -579,7 +578,9 @@ const submitResource = createResource({
 			payments: addToCustomerCredit.value
 				? []
 				: [{ mode_of_payment: refundMode.value, amount: -returnTotal.value }],
-			remarks: __("Return without invoice: {0}", [reason.value.trim()]),
+			remarks: reason.value.trim()
+				? __("Return without invoice: {0}", [reason.value.trim()])
+				: __("Return without invoice"),
 		};
 		return { invoice: JSON.stringify(invoiceData), data: JSON.stringify({}) };
 	},

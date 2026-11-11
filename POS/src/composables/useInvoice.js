@@ -1298,6 +1298,7 @@ export function useInvoice() {
 						items: ex.items,
 						reason: ex.reason,
 						refund_mode: ex.refund_mode || null,
+						keep_credit: ex.keep_credit ? 1 : 0,
 					};
 				}
 

@@ -457,9 +457,6 @@
 							<span class="font-semibold text-amber-900">{{ __("Exchange (clothes taken back)") }}</span>
 							<span class="font-bold text-amber-900">- {{ formatCurrency(exchangeApplied) }}</span>
 						</div>
-						<p v-if="exchangeGiveBack > 0" class="mt-1 text-xs font-semibold text-red-700">
-							{{ __("Give {0} back to the customer", [formatCurrency(exchangeGiveBack)]) }}
-						</p>
 					</div>
 
 					<!-- Outstanding Balance Row (full width, two columns) -->
@@ -1093,6 +1090,62 @@
 					]"
 					:style="isMobileView ? {} : { minHeight: rightColumnMinHeight }"
 				>
+					<!-- Exchange: returned clothes are worth more than this bill -->
+					<div
+						v-if="exchangeGiveBack > 0"
+						:class="[
+							'mb-2 lg:mb-3 rounded-xl border-2 px-4 py-3',
+							keepExchangeCredit ? 'border-green-300 bg-green-50' : 'border-red-300 bg-red-50',
+						]"
+					>
+						<div class="flex items-center justify-between gap-3">
+							<span
+								:class="[
+									'text-start text-sm lg:text-base font-bold uppercase tracking-wide',
+									keepExchangeCredit ? 'text-green-800' : 'text-red-800',
+								]"
+							>
+								{{ keepExchangeCredit ? __("Keep as customer credit") : __("Give back to customer") }}
+							</span>
+							<span
+								:class="[
+									'text-2xl lg:text-3xl font-extrabold whitespace-nowrap',
+									keepExchangeCredit ? 'text-green-700' : 'text-red-700',
+								]"
+							>
+								{{ formatCurrency(exchangeGiveBack) }}
+							</span>
+						</div>
+						<div class="mt-2 grid grid-cols-2 gap-2">
+							<button
+								type="button"
+								:class="[
+									'rounded-lg border px-3 py-1.5 text-sm font-semibold',
+									!keepExchangeCredit ? 'border-red-500 bg-white text-red-700' : 'border-gray-300 bg-white/60 text-gray-600',
+								]"
+								@click="emit('update-exchange-keep-credit', false)"
+							>
+								{{ __("Give back now") }}
+							</button>
+							<button
+								type="button"
+								:disabled="!exchangeCanKeepCredit"
+								:title="exchangeCanKeepCredit ? '' : __('Pick a named customer to keep credit')"
+								:class="[
+									'rounded-lg border px-3 py-1.5 text-sm font-semibold',
+									keepExchangeCredit ? 'border-green-500 bg-white text-green-700' : 'border-gray-300 bg-white/60 text-gray-600',
+									!exchangeCanKeepCredit ? 'opacity-50 cursor-not-allowed' : '',
+								]"
+								@click="emit('update-exchange-keep-credit', true)"
+							>
+								{{ __("Keep as credit") }}
+							</button>
+						</div>
+						<p v-if="!exchangeCanKeepCredit" class="mt-1 text-start text-xs text-gray-500">
+							{{ __("To keep it as credit, pick a named customer (not walk-in).") }}
+						</p>
+					</div>
+
 					<!-- Payment Methods -->
 					<div :class="isSmallMobile ? 'mb-1' : 'mb-1.5 lg:mb-3'">
 						<div
@@ -2151,6 +2204,15 @@ const props = defineProps({
 		type: Number,
 		default: 0,
 	},
+	/** Exchange extra stays with the shop as customer credit instead of being given back. */
+	exchangeKeepCredit: {
+		type: Boolean,
+		default: false,
+	},
+	exchangeCanKeepCredit: {
+		type: Boolean,
+		default: false,
+	},
 	grandTotal: {
 		type: Number,
 		default: 0,
@@ -2248,6 +2310,7 @@ const emit = defineEmits([
 	"update-additional-discount",
 	"show-offers",
 	"show-coupon",
+	"update-exchange-keep-credit",
 ]);
 
 const show = computed({
@@ -3564,6 +3627,14 @@ function clearAll() {
 // payment; the server returns the clothes and settles the bill with them.
 const exchangeApplied = computed(() =>
 	roundCurrency(Math.min(props.exchangeAmount || 0, roundCurrency(props.grandTotal)))
+);
+const keepExchangeCredit = computed(() => props.exchangeKeepCredit && props.exchangeCanKeepCredit);
+// Customer switched to walk-in after choosing credit: fall back to giving it back
+watch(
+	() => props.exchangeCanKeepCredit,
+	(can) => {
+		if (!can && props.exchangeKeepCredit) emit("update-exchange-keep-credit", false);
+	}
 );
 const exchangeGiveBack = computed(() =>
 	roundCurrency(Math.max((props.exchangeAmount || 0) - roundCurrency(props.grandTotal), 0))
