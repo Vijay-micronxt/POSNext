@@ -29,15 +29,21 @@
 						<Button variant="subtle" size="sm" @click="startCustomerEdit">{{ __("Change") }}</Button>
 					</div>
 					<div v-else class="relative">
-						<input
-							ref="customerInput"
-							v-model="customerSearch"
-							type="text"
-							autocomplete="off"
-							:placeholder="__('Search customer by name or mobile...')"
-							class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-							@input="onCustomerInput"
-						/>
+						<div class="flex gap-2">
+							<input
+								ref="customerInput"
+								v-model="customerSearch"
+								type="text"
+								autocomplete="off"
+								:placeholder="__('Search customer by name or mobile...')"
+								class="min-w-0 flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+								@input="onCustomerInput"
+							/>
+							<Button variant="subtle" class="h-auto whitespace-nowrap" @click="openCreateCustomer">
+								<template #prefix><FeatherIcon name="user-plus" class="h-4 w-4" /></template>
+								{{ __("New Customer") }}
+							</Button>
+						</div>
 						<div
 							v-if="customerResults.length"
 							class="absolute z-20 mt-1 w-full max-h-60 overflow-y-auto rounded-lg border border-gray-200 bg-white shadow-lg"
@@ -218,16 +224,25 @@
 			</div>
 		</template>
 	</Dialog>
+
+	<CreateCustomerDialog
+		v-model="showCreateCustomer"
+		:pos-profile="posProfile"
+		:initial-name="newCustomerName"
+		@customer-created="onCustomerCreated"
+	/>
 </template>
 
 <script setup>
 import { useToast } from "@/composables/useToast";
+import { useCustomerSearchStore } from "@/stores/customerSearch";
 import { usePOSCartStore } from "@/stores/posCart";
 import { usePOSSettingsStore } from "@/stores/posSettings";
 import { usePOSShiftStore } from "@/stores/posShift";
 import { DEFAULT_CURRENCY, formatCurrency as formatCurrencyUtil, roundCurrency } from "@/utils/currency";
 import { Button, Dialog, FeatherIcon, call, createResource } from "frappe-ui";
 import { computed, nextTick, ref, watch } from "vue";
+import CreateCustomerDialog from "./CreateCustomerDialog.vue";
 
 const props = defineProps({
 	modelValue: Boolean,
@@ -246,6 +261,7 @@ const { showSuccess, showError } = useToast();
 const settingsStore = usePOSSettingsStore();
 const shiftStore = usePOSShiftStore();
 const cartStore = usePOSCartStore();
+const customerSearchStore = useCustomerSearchStore();
 
 const SEARCH_DEBOUNCE_MS = 300;
 
@@ -254,6 +270,8 @@ const editingCustomer = ref(false);
 const customerSearch = ref("");
 const customerResults = ref([]);
 const customerInput = ref(null);
+const showCreateCustomer = ref(false);
+const newCustomerName = ref("");
 
 const itemSearch = ref("");
 const itemResults = ref([]);
@@ -326,10 +344,20 @@ function formatCurrency(amount) {
 	return formatCurrencyUtil(amount || 0, props.currency);
 }
 
-function resetForm() {
-	customer.value = defaultCustomer.value
+// Start with the customer tagged on the cart, else the profile's walk-in customer
+function initialCustomer() {
+	const cartCustomer = cartStore.customer;
+	if (cartCustomer?.name) return { ...cartCustomer };
+	if (typeof cartCustomer === "string" && cartCustomer) {
+		return { name: cartCustomer, customer_name: cartCustomer };
+	}
+	return defaultCustomer.value
 		? { name: defaultCustomer.value, customer_name: defaultCustomer.value }
 		: null;
+}
+
+function resetForm() {
+	customer.value = initialCustomer();
 	editingCustomer.value = !customer.value;
 	customerSearch.value = "";
 	customerResults.value = [];
@@ -338,7 +366,7 @@ function resetForm() {
 	itemSearched.value = false;
 	rows.value = [];
 	reason.value = "";
-	settle.value = "refund";
+	settle.value = settingsStore.returnToCreditByDefault && canUseCredit.value ? "credit" : "refund";
 	refundMode.value = paymentMethods.value.find((m) => m.default)?.mode_of_payment
 		|| paymentMethods.value[0]?.mode_of_payment
 		|| "";
@@ -391,6 +419,24 @@ function onCustomerInput() {
 			console.error("Customer search failed:", error);
 		}
 	}, SEARCH_DEBOUNCE_MS);
+}
+
+function openCreateCustomer() {
+	newCustomerName.value = customerSearch.value.trim();
+	customerResults.value = [];
+	showCreateCustomer.value = true;
+}
+
+async function onCustomerCreated(created) {
+	if (!created?.name) return;
+	if (props.posProfile) {
+		try {
+			await customerSearchStore.addCustomerToCache(created);
+		} catch (error) {
+			console.error("Could not cache new customer:", error);
+		}
+	}
+	pickCustomer(created);
 }
 
 function pickCustomer(c) {
