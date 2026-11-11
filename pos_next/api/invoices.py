@@ -1705,7 +1705,15 @@ def _make_exchange_return(sale_doc, exchange):
 	sale_due = max(flt(frappe.db.get_value(DOCTYPE_SALES_INVOICE, sale_doc.name, "outstanding_amount")), 0)
 	give_back = flt(return_value - sale_due, return_doc.precision("grand_total"))
 
-	if give_back > 0:
+	keep_credit = give_back > 0 and cint(exchange.get("keep_credit"))
+	if keep_credit:
+		# The customer leaves the extra with the shop: no refund row, so the return
+		# keeps a negative outstanding = credit for a later bill.
+		walk_in = frappe.db.get_value("POS Profile", sale_doc.pos_profile, "customer")
+		if sale_doc.customer == walk_in:
+			frappe.throw(_("Pick a named customer to keep {0} as credit.").format(give_back))
+		return_doc.flags.pos_next_redeemed_customer_credit = 1
+	elif give_back > 0:
 		refund_mode = exchange.get("refund_mode") or _default_cash_mode(sale_doc.pos_profile)
 		if not refund_mode:
 			frappe.throw(_("Pick a mode of payment to give {0} back to the customer.").format(give_back))
@@ -1731,7 +1739,12 @@ def _make_exchange_return(sale_doc, exchange):
 			_("Exchange: clothes taken back on {0}").format(return_doc.name),
 		)
 
-	return {"name": return_doc.name, "amount": return_value, "give_back": max(give_back, 0)}
+	return {
+		"name": return_doc.name,
+		"amount": return_value,
+		"give_back": 0 if keep_credit else max(give_back, 0),
+		"credit": give_back if keep_credit else 0,
+	}
 
 
 def _default_cash_mode(pos_profile):

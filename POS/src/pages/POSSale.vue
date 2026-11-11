@@ -530,6 +530,9 @@
 				:is-submitting="cartStore.isSubmitting"
 				:applied-offer-count="cartStore.appliedOffers.length"
 				:exchange-amount="cartStore.exchange?.total || 0"
+				:exchange-keep-credit="Boolean(cartStore.exchange?.keep_credit)"
+				:exchange-can-keep-credit="exchangeCanKeepCredit"
+				@update-exchange-keep-credit="setExchangeKeepCredit"
 				@payment-completed="handlePaymentCompleted"
 				@update-additional-discount="handleAdditionalDiscountUpdate"
 				@show-offers="uiStore.showOffersDialog = true"
@@ -3063,6 +3066,17 @@ async function restoreRfidTray(state) {
 		log.error("Could not restore the RFID tray of a held bill", error);
 		showWarning(__("The RFID tray of this bill could not be restored. Read its pieces on the tray again."));
 	}
+}
+
+// Exchange extra can stay with the shop as credit, only for a named customer:
+// credit on the walk-in customer could be used by anyone.
+const exchangeCanKeepCredit = computed(() => {
+	const name = cartStore.customer?.name || cartStore.customer;
+	return Boolean(name) && name !== shiftStore.profileCustomer;
+});
+
+function setExchangeKeepCredit(value) {
+	if (cartStore.exchange) cartStore.exchange.keep_credit = Boolean(value);
 }
 
 // Exchange: clothes came back without a bill; the customer now picks other clothes.
