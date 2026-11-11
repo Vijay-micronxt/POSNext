@@ -805,7 +805,16 @@ watch(showCountryDropdown, async (isOpen) => {
 watch(
 	() => props.modelValue,
 	async (isOpen) => {
-		isOpen ? await loadDialogData() : resetForm();
+		if (!isOpen) {
+			resetForm();
+			return;
+		}
+		// The initialName watcher only fires on change: reopening with the same
+		// search text after a reset would otherwise leave the name empty.
+		if (!isEditMode.value && props.initialName) {
+			customerData.value.customer_name = props.initialName;
+		}
+		await loadDialogData();
 	}
 );
 
