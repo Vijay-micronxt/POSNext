@@ -365,6 +365,9 @@
 								<p class="min-w-0 flex-1 truncate text-start text-sm font-semibold text-amber-900">
 									{{ cartStore.exchange.items.map((i) => `${i.item_name} x ${i.qty}`).join(", ") }}
 								</p>
+								<span class="whitespace-nowrap text-sm font-bold text-amber-900">
+									{{ formatMoney(cartStore.exchange.total, shiftStore.profileCurrency || undefined) }}
+								</span>
 								<button
 									type="button"
 									class="text-amber-700 hover:text-blue-600"
@@ -1222,6 +1225,7 @@ import PaymentDialog from "@/components/sale/PaymentDialog.vue";
 import PromotionManagement from "@/components/sale/PromotionManagement.vue";
 import ReturnInvoiceDialog from "@/components/sale/ReturnInvoiceDialog.vue";
 import ReturnWithoutInvoiceDialog from "@/components/sale/ReturnWithoutInvoiceDialog.vue";
+import { formatCurrency as formatMoney } from "@/utils/currency";
 import WarehouseAvailabilityDialog from "@/components/sale/WarehouseAvailabilityDialog.vue";
 import POSSettings from "@/components/settings/POSSettings.vue";
 import InvoiceManagement from "@/components/invoices/InvoiceManagement.vue";
