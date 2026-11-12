@@ -1,5 +1,8 @@
 <template>
-	<Dialog v-model="showDialog" :options="{ title: __('Return Without Invoice'), size: '4xl' }">
+	<Dialog
+		v-model="showDialog"
+		:options="{ title: isEdit ? __('Edit Exchange') : __('Return Without Invoice'), size: '4xl' }"
+	>
 		<template #body-content>
 			<!-- reka-ui's DialogOverlay prevents pointerdown, which stops inputs getting focus -->
 			<div class="flex flex-col gap-4 text-start" @pointerdown.stop>
@@ -147,8 +150,8 @@
 
 				<!-- What the customer gets for the clothes -->
 				<div v-if="rows.length">
-					<label class="block text-sm font-medium text-gray-700 mb-2">{{ __("Customer Gets") }}</label>
-					<div class="grid grid-cols-1 sm:grid-cols-3 gap-2 mb-3">
+					<label class="block text-sm font-medium text-gray-700 mb-2">{{ isEdit ? __("Exchange") : __("Customer Gets") }}</label>
+					<div v-if="!isEdit" class="grid grid-cols-1 sm:grid-cols-3 gap-2 mb-3">
 						<button
 							v-for="opt in settleOptions"
 							:key="opt.value"
@@ -167,7 +170,7 @@
 					</div>
 					<div v-if="settle !== 'credit'">
 						<label class="block text-sm font-medium text-gray-700 mb-2">
-							{{ settle === "exchange" ? __("If the new clothes cost less, give the rest back by") : __("Refund Mode") }}
+							{{ settle === "exchange" ? __("If the new clothes cost less, refund the balance by") : __("Refund Mode") }}
 						</label>
 						<div class="flex flex-wrap gap-2">
 							<button
@@ -218,7 +221,7 @@
 						:loading="submitResource.loading"
 						@click="handleSubmit"
 					>
-						{{ settle === "exchange" ? __("Add New Clothes") : __("Create Return") }}
+						{{ isEdit ? __("Update Exchange") : settle === "exchange" ? __("Add New Clothes") : __("Create Return") }}
 					</Button>
 				</div>
 			</div>
@@ -249,6 +252,8 @@ const props = defineProps({
 	posProfile: String,
 	posOpeningShift: String,
 	currency: { type: String, default: DEFAULT_CURRENCY },
+	/** Exchange already in the cart: the dialog edits its clothes instead of starting a new one. */
+	exchange: { type: Object, default: null },
 });
 const emit = defineEmits(["update:modelValue", "return-created", "exchange-started"]);
 
@@ -294,6 +299,7 @@ let itemRequest = 0;
 const taxInclusive = computed(() => Boolean(cartStore.taxInclusive));
 const canEditRate = computed(() => settingsStore.allowUserToEditRate);
 const hasOpenShift = computed(() => Boolean(props.posOpeningShift));
+const isEdit = computed(() => Boolean(props.exchange?.items?.length));
 const defaultCustomer = computed(() => shiftStore.profileCustomer);
 // Credit on the shop's walk-in customer can never be claimed back by anyone.
 const canUseCredit = computed(
@@ -308,12 +314,12 @@ const settleOptions = computed(() => [
 	{
 		value: "exchange",
 		label: __("Other Clothes"),
-		hint: __("Exchange: value goes to the new bill, customer pays or gets back the difference."),
+		hint: __("Exchange: value goes to the new bill; the customer pays the difference or gets a refund."),
 	},
 	{
 		value: "refund",
 		label: __("Money Back"),
-		hint: __("Pay the amount back now."),
+		hint: __("Refund the amount now."),
 	},
 	{
 		value: "credit",
@@ -369,6 +375,25 @@ function resetForm() {
 	refundMode.value = paymentMethods.value.find((m) => m.default)?.mode_of_payment
 		|| paymentMethods.value[0]?.mode_of_payment
 		|| "";
+}
+
+// Edit mode: start from the clothes already in the cart's exchange
+function loadExchange(ex) {
+	if (ex.customer?.name) customer.value = { ...ex.customer };
+	editingCustomer.value = !customer.value;
+	rows.value = ex.items.map((it) => ({
+		item_code: it.item_code,
+		item_name: it.item_name,
+		uom: it.uom,
+		conversion_factor: it.conversion_factor || 1,
+		warehouse: it.warehouse,
+		price_list_rate: it.price_list_rate || it.rate || 0,
+		rate: it.rate || 0,
+		qty: it.qty || 1,
+	}));
+	reason.value = ex.reason || "";
+	settle.value = "exchange";
+	if (ex.refund_mode) refundMode.value = ex.refund_mode;
 }
 
 async function loadPaymentMethods() {
@@ -538,6 +563,7 @@ function handleSubmit() {
 		total: returnTotal.value,
 		reason: reason.value.trim(),
 		refund_mode: refundMode.value,
+		keep_credit: Boolean(props.exchange?.keep_credit),
 		items: rows.value.map((r) => ({
 			item_code: r.item_code,
 			item_name: r.item_name,
@@ -605,6 +631,7 @@ watch(
 	(open) => {
 		if (!open) return;
 		resetForm();
+		if (isEdit.value) loadExchange(props.exchange);
 		if (!paymentMethods.value.length) loadPaymentMethods();
 		nextTick(() => itemInput.value?.focus());
 	}

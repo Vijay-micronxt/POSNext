@@ -1090,7 +1090,7 @@
 					]"
 					:style="isMobileView ? {} : { minHeight: rightColumnMinHeight }"
 				>
-					<!-- Exchange: returned clothes are worth more than this bill -->
+					<!-- Exchange: returned clothes are worth more than this bill, the balance is refunded or kept as credit -->
 					<div
 						v-if="exchangeGiveBack > 0"
 						:class="[
@@ -1105,7 +1105,7 @@
 									keepExchangeCredit ? 'text-green-800' : 'text-red-800',
 								]"
 							>
-								{{ keepExchangeCredit ? __("Keep as customer credit") : __("Give back to customer") }}
+								{{ keepExchangeCredit ? __("Balance Added to Store Credit") : __("Balance Refund Due") }}
 							</span>
 							<span
 								:class="[
@@ -1125,12 +1125,12 @@
 								]"
 								@click="emit('update-exchange-keep-credit', false)"
 							>
-								{{ __("Give back now") }}
+								{{ __("Refund Now") }}
 							</button>
 							<button
 								type="button"
 								:disabled="!exchangeCanKeepCredit"
-								:title="exchangeCanKeepCredit ? '' : __('Pick a named customer to keep credit')"
+								:title="exchangeCanKeepCredit ? '' : __('Store credit needs a named customer')"
 								:class="[
 									'rounded-lg border px-3 py-1.5 text-sm font-semibold',
 									keepExchangeCredit ? 'border-green-500 bg-white text-green-700' : 'border-gray-300 bg-white/60 text-gray-600',
@@ -1138,11 +1138,11 @@
 								]"
 								@click="emit('update-exchange-keep-credit', true)"
 							>
-								{{ __("Keep as credit") }}
+								{{ __("Keep as Store Credit") }}
 							</button>
 						</div>
 						<p v-if="!exchangeCanKeepCredit" class="mt-1 text-start text-xs text-gray-500">
-							{{ __("To keep it as credit, pick a named customer (not walk-in).") }}
+							{{ __("Store credit needs a named customer (not walk-in).") }}
 						</p>
 					</div>
 

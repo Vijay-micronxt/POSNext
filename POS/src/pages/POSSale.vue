@@ -362,14 +362,17 @@
 								class="mx-2 mt-2 flex items-center gap-3 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2"
 							>
 								<FeatherIcon name="repeat" class="h-5 w-5 flex-shrink-0 text-amber-700" />
-								<div class="min-w-0 flex-1 text-start">
-									<p class="text-sm font-semibold text-amber-900">
-										{{ __("Exchange: {0} coming back", [formatCurrency(cartStore.exchange.total)]) }}
-									</p>
-									<p class="truncate text-xs text-amber-800">
-										{{ cartStore.exchange.items.map((i) => `${i.item_name} x ${i.qty}`).join(", ") }}
-									</p>
-								</div>
+								<p class="min-w-0 flex-1 truncate text-start text-sm font-semibold text-amber-900">
+									{{ cartStore.exchange.items.map((i) => `${i.item_name} x ${i.qty}`).join(", ") }}
+								</p>
+								<button
+									type="button"
+									class="text-amber-700 hover:text-blue-600"
+									:title="__('Edit exchange items')"
+									@click="showEditExchange = true"
+								>
+									<FeatherIcon name="edit-2" class="h-4 w-4" />
+								</button>
 								<button
 									type="button"
 									class="text-amber-700 hover:text-red-600"
@@ -576,6 +579,16 @@
 				:currency="shiftStore.profileCurrency"
 				@return-created="handleReturnCreated"
 				@exchange-started="handleExchangeStarted"
+			/>
+
+			<!-- Edit the clothes of an exchange already in the cart -->
+			<ReturnWithoutInvoiceDialog
+				v-model="showEditExchange"
+				:pos-profile="shiftStore.profileName"
+				:pos-opening-shift="shiftStore.currentShift?.name"
+				:currency="shiftStore.profileCurrency"
+				:exchange="cartStore.exchange"
+				@exchange-started="handleExchangeEdited"
 			/>
 
 			<!-- Coupon Dialog -->
@@ -1208,6 +1221,7 @@ import OfflineInvoicesDialog from "@/components/sale/OfflineInvoicesDialog.vue";
 import PaymentDialog from "@/components/sale/PaymentDialog.vue";
 import PromotionManagement from "@/components/sale/PromotionManagement.vue";
 import ReturnInvoiceDialog from "@/components/sale/ReturnInvoiceDialog.vue";
+import ReturnWithoutInvoiceDialog from "@/components/sale/ReturnWithoutInvoiceDialog.vue";
 import WarehouseAvailabilityDialog from "@/components/sale/WarehouseAvailabilityDialog.vue";
 import POSSettings from "@/components/settings/POSSettings.vue";
 import InvoiceManagement from "@/components/invoices/InvoiceManagement.vue";
@@ -3095,6 +3109,19 @@ async function handleExchangeStarted(exchange) {
 
 function cancelExchange() {
 	cartStore.exchange = null;
+}
+
+const showEditExchange = ref(false);
+
+async function handleExchangeEdited(exchange) {
+	const defaultCustomer = shiftStore.profileCustomer;
+	const name = exchange.customer?.name;
+	const current = cartStore.customer?.name || cartStore.customer;
+	if (name && name !== defaultCustomer && name !== current) {
+		await cartStore.setCustomer(exchange.customer);
+	}
+	cartStore.exchange = exchange;
+	showSuccess(__("Exchange updated"));
 }
 
 function handleReturnCreated(returnInvoice) {
