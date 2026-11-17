@@ -9,6 +9,8 @@ export {}
 declare module 'vue' {
   export interface GlobalComponents {
     ActionButton: typeof import('./src/components/common/ActionButton.vue')['default']
+    ApprovalGiveDialog: typeof import('./src/components/sale/ApprovalGiveDialog.vue')['default']
+    ApprovalSettleDialog: typeof import('./src/components/sale/ApprovalSettleDialog.vue')['default']
     AutocompleteSelect: typeof import('./src/components/common/AutocompleteSelect.vue')['default']
     BatchSerialDialog: typeof import('./src/components/sale/BatchSerialDialog.vue')['default']
     CheckboxField: typeof import('./src/components/settings/CheckboxField.vue')['default']
@@ -43,6 +45,7 @@ declare module 'vue' {
     POSSettings: typeof import('./src/components/settings/POSSettings.vue')['default']
     PromotionManagement: typeof import('./src/components/sale/PromotionManagement.vue')['default']
     ReturnInvoiceDialog: typeof import('./src/components/sale/ReturnInvoiceDialog.vue')['default']
+    ReturnWithoutInvoiceDialog: typeof import('./src/components/sale/ReturnWithoutInvoiceDialog.vue')['default']
     RfidTray: typeof import('./src/components/sale/RfidTray.vue')['default']
     RouterLink: typeof import('vue-router')['RouterLink']
     RouterView: typeof import('vue-router')['RouterView']
