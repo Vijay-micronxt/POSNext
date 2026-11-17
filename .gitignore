@@ -67,3 +67,8 @@ TODO.md
 .claude/settings.json
 *.jpeg
 missing.txt
+
+# Written by the frappe-ui Vite plugin on every build; tracking them made
+# `git pull` stop on servers that had built the POS
+POS/components.d.ts
+POS/auto-imports.d.ts
