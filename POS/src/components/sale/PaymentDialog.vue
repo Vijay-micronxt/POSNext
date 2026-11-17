@@ -3113,6 +3113,11 @@ const canComplete = computed(() => {
 		return false;
 	}
 
+	// Nothing to pay (e.g. 100% discount): the bill is complete without a payment row
+	if (roundCurrency(props.grandTotal) <= 0 && paymentEntries.value.length === 0) {
+		return true;
+	}
+
 	// "Pay on Receivable Account": the chosen account holds the unpaid balance
 	if (selectedReceivableAccount.value && props.allowCreditSale) {
 		return totalPaid.value <= roundCurrency(props.grandTotal) + 0.01;
