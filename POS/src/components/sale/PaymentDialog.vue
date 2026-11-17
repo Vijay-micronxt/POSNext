@@ -1626,6 +1626,20 @@
 						<div
 							:class="['flex-shrink-0', isSmallMobile ? 'space-y-1' : 'space-y-1.5']"
 						>
+							<!-- Give on Approval (RFID counter, when switched on) -->
+							<button
+								v-if="showApproval && paymentEntries.length === 0"
+								@click="emit('give-approval')"
+								:disabled="isSubmitting"
+								:class="[
+									'w-full font-semibold rounded-lg bg-amber-100 text-amber-800 active:bg-amber-200 flex items-center justify-center',
+									mobileButtonSize.height,
+									mobileButtonSize.text,
+									mobileButtonSize.gap,
+								]"
+							>
+								<span>{{ __("Approval") }}</span>
+							</button>
 							<!-- Two buttons side by side when both needed -->
 							<div
 								v-if="
@@ -2015,6 +2029,25 @@
 								isSubmitting ? __("Processing...") : __("Pay on Account")
 							}}</span>
 						</button>
+						<!-- Give on Approval (RFID counter, when switched on): the customer takes the goods unpaid -->
+						<button
+							v-if="showApproval"
+							@click="emit('give-approval')"
+							:disabled="paymentEntries.length > 0 || isSubmitting"
+							:class="[
+								'flex-1 inline-flex items-center justify-center gap-2 transition-colors focus:outline-none',
+								dynamicButtonHeight,
+								'text-sm font-semibold px-4 rounded-lg',
+								paymentEntries.length > 0 || isSubmitting
+									? 'bg-amber-100 text-amber-400 cursor-not-allowed'
+									: 'bg-amber-100 text-amber-800 hover:bg-amber-200 active:bg-amber-300',
+							]"
+						>
+							<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+								<path stroke-linecap="round" stroke-linejoin="round" d="M16 11V7a4 4 0 00-8 0v4M5 9h14l1 12H4L5 9z" />
+							</svg>
+							<span>{{ __("Approval") }}</span>
+						</button>
 
 						<!-- Complete/Partial Payment Button -->
 						<button
@@ -2175,6 +2208,7 @@
 <script setup>
 import { usePOSSettingsStore } from "@/stores/posSettings";
 import { usePOSCartStore } from "@/stores/posCart";
+import { usePosRfidStore } from "@/stores/posRfid";
 import {
 	DEFAULT_CURRENCY,
 	formatCurrency as formatCurrencyUtil,
@@ -2311,12 +2345,19 @@ const emit = defineEmits([
 	"show-offers",
 	"show-coupon",
 	"update-exchange-keep-credit",
+	"give-approval",
 ]);
 
 const show = computed({
 	get: () => props.modelValue,
 	set: (val) => emit("update:modelValue", val),
 });
+
+// Goods on approval (rfid_retail): offered for a sale, never for an order, exchange or return
+const rfidStore = usePosRfidStore();
+const showApproval = computed(
+	() => rfidStore.goodsOnApproval && props.targetDoctype !== "Sales Order" && !cartStore.exchange
+);
 
 const paymentMethods = ref([]);
 const loadingPaymentMethods = ref(false);

@@ -424,7 +424,6 @@
 								@show-history="openHistoryDialog"
 								@show-return="openReturnDialog"
 								@close-shift="handleCloseShift"
-								@give-approval="handleGiveApproval"
 								@show-approvals="showApprovals = true"
 							/>
 						</div>
@@ -545,6 +544,7 @@
 				@update-additional-discount="handleAdditionalDiscountUpdate"
 				@show-offers="uiStore.showOffersDialog = true"
 				@show-coupon="uiStore.showCouponDialog = true"
+				@give-approval="handleGiveApproval"
 			/>
 
 			<!-- Customer Selection Dialog -->
@@ -1275,7 +1275,7 @@ import { qzConnected, connect as qzConnect, disconnect as qzDisconnect } from "@
 
 import { Button, Dialog, FeatherIcon, createResource } from "frappe-ui";
 import { call } from "@/utils/apiWrapper";
-import { computed, onMounted, onUnmounted, ref, watch } from "vue";
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
 import { useToast } from "@/composables/useToast";
 
 import { useCustomerSearchStore } from "@/stores/customerSearch";
@@ -2477,6 +2477,11 @@ function handleCustomerSelected(selectedCustomer) {
 			pendingPaymentAfterCustomer.value = false;
 			uiStore.showPaymentDialog = true;
 		}
+		// Approval was pressed without a customer: carry on with the one just chosen
+		if (pendingApprovalAfterCustomer.value) {
+			pendingApprovalAfterCustomer.value = false;
+			nextTick(handleGiveApproval);
+		}
 	} else {
 		cartStore.setCustomer(null);
 	}
@@ -3152,6 +3157,7 @@ async function handleExchangeEdited(exchange) {
 
 // ---------------------------------------------------------------- goods on approval (RFID counter)
 const showApprovalGive = ref(false);
+const pendingApprovalAfterCustomer = ref(false);
 const showApprovals = ref(false);
 const approvalItems = ref([]);
 
@@ -3177,9 +3183,12 @@ async function handleGiveApproval() {
 	const customer = cartStore.customer?.name || cartStore.customer;
 	if (!customer || customer === shiftStore.profileCustomer) {
 		showWarning(__("Choose the customer who takes the goods"));
+		uiStore.showPaymentDialog = false;
+		pendingApprovalAfterCustomer.value = true;
 		uiStore.showCustomerDialog = true;
 		return;
 	}
+	uiStore.showPaymentDialog = false;
 	approvalItems.value = cartStore.formatItemsForSubmission(cartStore.invoiceItems);
 	showApprovalGive.value = true;
 }

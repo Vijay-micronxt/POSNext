@@ -1460,23 +1460,6 @@
 					<span>{{ __("Hold", null, "order") }}</span>
 				</button>
 
-				<!-- Give on Approval (RFID counter, when switched on) -->
-				<button
-					type="button"
-					v-if="items.length > 0 && rfidStore.goodsOnApproval"
-					@click="$emit('give-approval')"
-					class="flex-1 py-2.5 px-2 rounded-lg font-semibold text-xs text-amber-800 bg-amber-50 hover:bg-amber-100 active:bg-amber-200 transition-all touch-manipulation active:scale-[0.98] flex items-center justify-center"
-					:aria-label="__('Give on approval')"
-				>
-					<svg class="w-4 h-4 me-1.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
-						<path
-							stroke-linecap="round"
-							stroke-linejoin="round"
-							d="M16 11V7a4 4 0 00-8 0v4M5 9h14l1 12H4L5 9z"
-						/>
-					</svg>
-					<span>{{ __("Approval") }}</span>
-				</button>
 			</div>
 		</div>
 
@@ -1608,7 +1591,6 @@ const emit = defineEmits([
 	"show-drafts", // () - Show draft/held orders
 	"show-history", // () - Show invoice history
 	"show-return", // () - Open return invoice dialog
-	"give-approval", // () - Give the cart's pieces on approval (RFID counter, when switched on)
 	"show-approvals", // () - Settle goods given on approval
 	"close-shift", // () - Close current shift
 	// "create-sales-order", // () - Create Sales Order // Removed as per instruction
