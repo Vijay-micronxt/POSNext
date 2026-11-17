@@ -849,6 +849,29 @@
 						}}</span>
 					</button>
 
+					<!-- Goods on Approval (RFID counter, when switched on) -->
+					<button
+						v-if="rfidStore.goodsOnApproval"
+						type="button"
+						@click="$emit('show-approvals')"
+						class="flex flex-col items-center justify-center p-3 sm:p-4 bg-white border border-gray-200 rounded-lg hover:border-amber-300 hover:bg-amber-50 active:bg-amber-100 transition-colors shadow-sm hover:shadow touch-manipulation group"
+						:title="__('Settle goods given on approval')"
+					>
+						<div
+							class="w-9 h-9 sm:w-10 sm:h-10 bg-amber-50 rounded-full flex items-center justify-center mb-2 group-hover:bg-amber-100 transition-colors"
+						>
+							<svg class="w-5 h-5 text-amber-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+								<path
+									stroke-linecap="round"
+									stroke-linejoin="round"
+									stroke-width="2"
+									d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4"
+								/>
+							</svg>
+						</div>
+						<span class="text-[11px] sm:text-xs font-semibold text-gray-700">{{ __("Approvals") }}</span>
+					</button>
+
 					<!-- Close Shift -->
 					<button
 						type="button"
@@ -1436,6 +1459,7 @@
 					</svg>
 					<span>{{ __("Hold", null, "order") }}</span>
 				</button>
+
 			</div>
 		</div>
 
@@ -1459,6 +1483,7 @@
 import { usePOSCartStore } from "@/stores/posCart";
 import { usePOSSettingsStore } from "@/stores/posSettings";
 import { usePOSOffersStore } from "@/stores/posOffers";
+import { usePosRfidStore } from "@/stores/posRfid";
 import { useCustomerSearchStore } from "@/stores/customerSearch";
 import { DEFAULT_CURRENCY, formatCurrency as formatCurrencyUtil } from "@/utils/currency";
 import { useFormatters } from "@/composables/useFormatters";
@@ -1480,6 +1505,7 @@ import EditItemDialog from "./EditItemDialog.vue";
  */
 const cartStore = usePOSCartStore(); // Pinia store for cart state management
 const settingsStore = usePOSSettingsStore(); // Pinia store for POS settings
+const rfidStore = usePosRfidStore(); // RFID counter mode (goods on approval lives there)
 const offersStore = usePOSOffersStore(); // Pinia store for offers/promotions
 const customerSearchStore = useCustomerSearchStore(); // Pinia store for customer search
 const { formatQuantity } = useFormatters(); // Quantity formatting utilities
@@ -1565,6 +1591,7 @@ const emit = defineEmits([
 	"show-drafts", // () - Show draft/held orders
 	"show-history", // () - Show invoice history
 	"show-return", // () - Open return invoice dialog
+	"show-approvals", // () - Settle goods given on approval
 	"close-shift", // () - Close current shift
 	// "create-sales-order", // () - Create Sales Order // Removed as per instruction
 ]);

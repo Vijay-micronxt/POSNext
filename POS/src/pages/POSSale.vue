@@ -424,6 +424,7 @@
 								@show-history="openHistoryDialog"
 								@show-return="openReturnDialog"
 								@close-shift="handleCloseShift"
+								@show-approvals="showApprovals = true"
 							/>
 						</div>
 					</keep-alive>
@@ -543,6 +544,7 @@
 				@update-additional-discount="handleAdditionalDiscountUpdate"
 				@show-offers="uiStore.showOffersDialog = true"
 				@show-coupon="uiStore.showCouponDialog = true"
+				@give-approval="handleGiveApproval"
 			/>
 
 			<!-- Customer Selection Dialog -->
@@ -592,6 +594,24 @@
 				:currency="shiftStore.profileCurrency"
 				:exchange="cartStore.exchange"
 				@exchange-started="handleExchangeEdited"
+			/>
+
+			<!-- Goods on approval (RFID counter): give the cart's pieces unpaid, settle later -->
+			<ApprovalGiveDialog
+				v-model="showApprovalGive"
+				:customer="cartStore.customer"
+				:items="approvalItems"
+				:total="cartStore.grandTotal"
+				:currency="shiftStore.profileCurrency"
+				@given="handleApprovalGiven"
+			/>
+			<ApprovalSettleDialog
+				v-model="showApprovals"
+				:pos-profile="shiftStore.profileName"
+				:pos-opening-shift="shiftStore.currentShift?.name"
+				:currency="shiftStore.profileCurrency"
+				@settled="handleApprovalSettled"
+				@print="printApprovalDoc"
 			/>
 
 			<!-- Coupon Dialog -->
@@ -1225,6 +1245,8 @@ import PaymentDialog from "@/components/sale/PaymentDialog.vue";
 import PromotionManagement from "@/components/sale/PromotionManagement.vue";
 import ReturnInvoiceDialog from "@/components/sale/ReturnInvoiceDialog.vue";
 import ReturnWithoutInvoiceDialog from "@/components/sale/ReturnWithoutInvoiceDialog.vue";
+import ApprovalGiveDialog from "@/components/sale/ApprovalGiveDialog.vue";
+import ApprovalSettleDialog from "@/components/sale/ApprovalSettleDialog.vue";
 import { formatCurrency as formatMoney } from "@/utils/currency";
 import WarehouseAvailabilityDialog from "@/components/sale/WarehouseAvailabilityDialog.vue";
 import POSSettings from "@/components/settings/POSSettings.vue";
@@ -3126,6 +3148,74 @@ async function handleExchangeEdited(exchange) {
 	}
 	cartStore.exchange = exchange;
 	showSuccess(__("Exchange updated"));
+}
+
+// ---------------------------------------------------------------- goods on approval (RFID counter)
+const showApprovalGive = ref(false);
+const showApprovals = ref(false);
+const approvalItems = ref([]);
+
+async function handleGiveApproval() {
+	if (cartStore.isEmpty) return;
+	if (offlineStore.isOffline) {
+		showWarning(__("Giving goods on approval needs a connection"));
+		return;
+	}
+	if (cartStore.exchange) {
+		showWarning(__("Finish or cancel the exchange first."));
+		return;
+	}
+	if (rfidStore.blocked) {
+		showWarning(__("A set on the tray is incomplete. Read the missing pieces or remove it."));
+		return;
+	}
+	const handPickedProblem = await rfidHandPickedProblem();
+	if (handPickedProblem) {
+		showWarning(handPickedProblem);
+		return;
+	}
+	const customer = cartStore.customer?.name || cartStore.customer;
+	if (!customer || customer === shiftStore.profileCustomer) {
+		// the customer is chosen in the cart, before Approval
+		uiStore.showPaymentDialog = false;
+		showWarning(__("Select the customer in the cart first, then press Approval again."));
+		return;
+	}
+	uiStore.showPaymentDialog = false;
+	approvalItems.value = cartStore.formatItemsForSubmission(cartStore.invoiceItems);
+	showApprovalGive.value = true;
+}
+
+function printApprovalDoc({ doctype, name, format }, printWindow = null) {
+	const params = new URLSearchParams({ doctype, name, no_letterhead: 1, trigger_print: 1, _t: Date.now() });
+	if (format) params.append("format", format);
+	const url = `/printview?${params}`;
+	if (printWindow && !printWindow.closed) {
+		printWindow.location.href = url;
+		return;
+	}
+	if (!window.open(url, "_blank", "width=800,height=600")) {
+		showWarning(__("Allow pop-ups for this site to print {0}", [name]));
+	}
+}
+
+async function handleApprovalGiven(res, printWindow = null) {
+	const itemCodes = [...new Set(cartStore.invoiceItems.map((item) => item.item_code))];
+	showSuccess(__("{0} given on approval. Settle it from Approvals when the customer comes back.", [res.name]));
+	rfidStore.reset();
+	cartStore.clearCart();
+	previousCartHash = "";
+	printApprovalDoc({ doctype: "Delivery Note", name: res.name, format: res.print_format }, printWindow);
+	await stockStore.refresh(itemCodes, shiftStore.profileWarehouse).catch(() => {});
+}
+
+async function handleApprovalSettled(res, printWindow = null) {
+	if (res.sales_invoice) {
+		printInvoiceByName(res.sales_invoice, null, null, printWindow).catch((error) => log.error("Could not print approval bill", error));
+		loadInvoiceHistoryData().catch(() => {});
+	}
+	if (res.item_codes?.length)
+		await stockStore.refresh(res.item_codes, shiftStore.profileWarehouse).catch(() => {});
 }
 
 function handleReturnCreated(returnInvoice) {

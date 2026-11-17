@@ -64,6 +64,10 @@ export const usePosRfidStore = defineStore("posRfid", () => {
 	);
 	// The server can keep a held bill's basket (and the tags claimed on it) until the bill is resumed.
 	const canHold = computed(() => enabled.value && !!config.value.hold);
+	// Goods on approval: the customer takes the pieces unpaid on an Approval Note (RFID Settings switch)
+	const goodsOnApproval = computed(() => enabled.value && !!config.value.goods_on_approval);
+	// self | pin | password | pin_or_password (who approves giving goods on approval, and how)
+	const goodsApproval = computed(() => config.value.goods_approval || "pin");
 
 	function applyView(view) {
 		basket.value = view.basket;
@@ -199,6 +203,44 @@ export const usePosRfidStore = defineStore("posRfid", () => {
 		const res = await call("rfid_retail.api.pos.unread_approval_status", { request });
 		if (res.unread) unread.value = res.unread;
 		return res;
+	}
+
+	/** Goods on approval, step 1: ask the approvers for a PIN. Returns { request, ... } (request null: no approval needed). */
+	async function requestGoodsApproval({ customer, qty, amount, note }) {
+		return serial(async () => {
+			if (!basket.value) await openBasket();
+			return call("rfid_retail.api.on_approval.request_approval", {
+				basket: basket.value,
+				customer,
+				qty,
+				amount,
+				note: note || null,
+			});
+		});
+	}
+
+	async function confirmGoodsPin(request, pin) {
+		return call("rfid_retail.api.on_approval.confirm_pin", { request, pin });
+	}
+
+	async function goodsApprovalStatus(request) {
+		return call("rfid_retail.api.on_approval.approval_status", { request });
+	}
+
+	/** Goods on approval, step 2: make the Approval Note from the bill on screen. Returns { name, print_format }. */
+	async function giveOnApproval({ customer, items, request, manager, password, note }) {
+		return serial(async () => {
+			if (!basket.value) await openBasket();
+			return call("rfid_retail.api.on_approval.give", {
+				basket: basket.value,
+				customer,
+				items,
+				request: request || null,
+				manager: manager || null,
+				password: password || null,
+				note: note || null,
+			});
+		});
 	}
 
 	const keyOf = (line) => line.key || line.serial_no;
@@ -392,6 +434,12 @@ export const usePosRfidStore = defineStore("posRfid", () => {
 		unreadApproval,
 		unreadReasons,
 		canHold,
+		goodsOnApproval,
+		goodsApproval,
+		requestGoodsApproval,
+		confirmGoodsPin,
+		goodsApprovalStatus,
+		giveOnApproval,
 		holdState,
 		hold,
 		undoHold,
