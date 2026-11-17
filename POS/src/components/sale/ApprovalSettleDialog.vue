@@ -71,7 +71,7 @@
 											min="0"
 											:max="r.pending"
 											class="qty"
-											@change="setQty(r, 'sell', $event.target.value)"
+											@change="setQty(r, 'sell', $event.target.value, $event.target)"
 										/>
 										<button type="button" class="step" @click="setQty(r, 'sell', r.sell + 1)">+</button>
 									</div>
@@ -86,7 +86,7 @@
 											min="0"
 											:max="r.pending"
 											class="qty"
-											@change="setQty(r, 'ret', $event.target.value)"
+											@change="setQty(r, 'ret', $event.target.value, $event.target)"
 										/>
 										<button type="button" class="step" @click="setQty(r, 'ret', r.ret + 1)">+</button>
 									</div>
@@ -109,7 +109,7 @@
 								max="100"
 								step="0.01"
 								class="w-40 h-9 px-3 rounded-lg border border-gray-300 text-end font-semibold"
-								@input="onDiscountPct($event.target.value)"
+								@input="onDiscountPct($event.target.value, $event.target)"
 							/>
 						</div>
 						<div class="flex items-center justify-between gap-3">
@@ -120,7 +120,7 @@
 								min="0"
 								step="0.01"
 								class="w-40 h-9 px-3 rounded-lg border border-gray-300 text-end font-semibold"
-								@input="onPay($event.target.value)"
+								@input="onPay($event.target.value, $event.target)"
 							/>
 						</div>
 						<div v-if="discount > 0" class="flex justify-between text-green-700">
@@ -262,16 +262,22 @@ async function openNote(name) {
 		note.value = d;
 		// everything is sold unless the cashier returns it
 		rows.value = d.rows.map((r) => ({ ...r, sell: r.pending, ret: 0 }));
-		discountPct.value = 0;
-		onDiscountPct(0);
+		// by default the kept pieces are free (100% discount); the cashier lowers it when paid
+		onDiscountPct(100);
 	} catch (e) {
 		error.value = parseError(e).message;
 	}
 }
 
 /** Sell and Return of a row always add up to its quantity: changing one moves the other. */
-function setQty(r, side, value) {
+/** Puts the clamped value back into the box: when the value did not change, Vue would leave the typed one. */
+function showIn(input, value) {
+	if (input && String(input.value) !== String(value)) input.value = value;
+}
+
+function setQty(r, side, value, input = null) {
 	const v = Math.min(Math.max(Math.floor(Number(value) || 0), 0), r.pending);
+	showIn(input, v);
 	if (side === "sell") {
 		r.sell = v;
 		r.ret = r.pending - v;
@@ -285,15 +291,17 @@ function setAll(side) {
 	for (const r of openRows.value) setQty(r, side, r.pending);
 }
 
-function onDiscountPct(value) {
+function onDiscountPct(value, input = null) {
 	const pct = Math.min(Math.max(Number(value) || 0, 0), 100);
 	discountPct.value = Math.round(pct * 100) / 100;
+	if (input && (Number(value) > 100 || Number(value) < 0)) showIn(input, discountPct.value);
 	pay.value = roundCurrency((soldValue.value * (100 - pct)) / 100);
 }
 
-function onPay(value) {
+function onPay(value, input = null) {
 	const v = Math.min(Math.max(Number(value) || 0, 0), soldValue.value);
 	pay.value = roundCurrency(v);
+	if (input && (Number(value) > soldValue.value || Number(value) < 0)) showIn(input, pay.value);
 	discountPct.value = soldValue.value
 		? Math.round(((soldValue.value - v) / soldValue.value) * 10000) / 100
 		: 0;
