@@ -566,11 +566,24 @@
 									<p
 										class="text-xs text-gray-500 mt-0.5 flex items-center gap-1 flex-wrap justify-center"
 									>
+										<span class="inline-flex items-center gap-1" @click.stop>
+											@
+											<input
+												type="number"
+												min="0"
+												step="0.01"
+												:max="item.refund_cap || undefined"
+												:value="item.rate_with_tax || item.rate"
+												:disabled="!item.selected"
+												:title="__('Refund rate per unit')"
+												class="w-20 h-6 rounded border border-gray-300 px-1 text-end text-xs text-gray-900 disabled:bg-gray-50"
+												@change="setRefundRate(item, $event.target.value)"
+											/>/{{ item.uom }}
+										</span>
 										<span
-											>@
-											{{
-												formatCurrency(item.price_list_rate || item.rate)
-											}}/{{ item.uom }}</span
+											v-if="item.refund_cap > (item.rate_with_tax || item.rate)"
+											class="line-through text-gray-400"
+											>{{ formatCurrency(item.refund_cap) }}</span
 										>
 										<span
 											v-if="item.discount_per_unit > 0"
@@ -690,13 +703,24 @@
 										<p
 											class="text-xs text-gray-500 flex items-center gap-1 flex-wrap justify-end"
 										>
+											<span class="inline-flex items-center gap-1" @click.stop>
+												@
+												<input
+													type="number"
+													min="0"
+													step="0.01"
+													:max="item.refund_cap || undefined"
+													:value="item.rate_with_tax || item.rate"
+													:disabled="!item.selected"
+													:title="__('Refund rate per unit')"
+													class="w-20 h-6 rounded border border-gray-300 px-1 text-end text-xs text-gray-900 disabled:bg-gray-50"
+													@change="setRefundRate(item, $event.target.value)"
+												/>/{{ item.uom }}
+											</span>
 											<span
-												>@
-												{{
-													formatCurrency(
-														item.price_list_rate || item.rate
-													)
-												}}/{{ item.uom }}</span
+												v-if="item.refund_cap > (item.rate_with_tax || item.rate)"
+												class="line-through text-gray-400"
+												>{{ formatCurrency(item.refund_cap) }}</span
 											>
 											<span
 												v-if="item.discount_per_unit > 0"
@@ -1454,6 +1478,8 @@ const fetchInvoiceResource = createResource({
 				selected: false,
 				return_qty: item.remaining_qty,
 				original_qty: item.original_qty,
+				// Highest refund rate per unit the cashier may set: the selling price, tax included
+				refund_cap: refundCap(item),
 			}));
 			returnItems.value.forEach(normalizeItemQuantity);
 
@@ -1829,6 +1855,35 @@ function openErrorDialog(message, title = __("Validation Error")) {
 
 function closeErrorDialog() {
 	errorDialog.visible = false;
+}
+
+// Refund rate per unit as the customer sees it (tax included). Starts at what the customer
+// paid for the row (bill discount already taken off); the cashier can lower it, never above
+// the item's selling price.
+function refundCap(item) {
+	const listRate = Number(item.price_list_rate) || 0;
+	const rate = Number(item.rate) || 0;
+	if (item.tax_included_in_rate || !(Number(item.tax_per_unit) > 0) || rate <= 0) return listRate;
+	return roundCurrency(listRate * ((Number(item.rate_with_tax) || rate) / rate));
+}
+
+function setRefundRate(item, value) {
+	const cap = Number(item.refund_cap) || 0;
+	let refund = Math.max(0, roundCurrency(Number(value) || 0));
+	if (cap > 0 && refund > cap) refund = cap;
+
+	const current = Number(item.rate_with_tax || item.rate) || 0;
+	if (item.tax_included_in_rate || !(Number(item.tax_per_unit) > 0) || current <= 0) {
+		// rate is tax-inclusive (or untaxed): the server takes the tax back out of it
+		item.rate = refund;
+	} else {
+		// rate is before tax: scale rate and tax together so rate + tax = refund
+		const factor = refund / current;
+		item.tax_per_unit = roundCurrency(item.tax_per_unit * factor);
+		item.rate = roundCurrency(refund - item.tax_per_unit);
+	}
+	item.rate_with_tax = refund;
+	item.discount_per_unit = roundCurrency(Math.max(0, (Number(item.price_list_rate) || 0) - (item.tax_included_in_rate ? refund : item.rate)));
 }
 
 function normalizeItemQuantity(item) {
