@@ -1391,6 +1391,17 @@
 				</div>
 			</div>
 
+			<!-- Rounding Adjustment (POS Profile Rounded Total on) -->
+			<div
+				v-if="items.length > 0 && roundingAdjustment !== 0"
+				class="flex items-center justify-between text-xs text-gray-600 mb-1.5"
+			>
+				<span class="font-medium">{{ __("Rounding Adjustment") }}</span>
+				<span class="font-bold text-gray-900 text-center min-w-[60px]">{{
+					formatCurrency(roundingAdjustment)
+				}}</span>
+			</div>
+
 			<!-- Grand Total -->
 			<div class="bg-gradient-to-r from-blue-50 to-indigo-50 rounded-lg p-2.5 mb-1.5">
 				<div class="flex items-center justify-between">
@@ -1830,8 +1841,11 @@ const displaySubtotal = computed(() => {
 const displayGrandTotal = computed(() => {
 	// Always: displaySubtotal + tax - discount
 	// This makes the display consistent and intuitive
-	return displaySubtotal.value + props.taxAmount - props.discountAmount;
+	return displaySubtotal.value + props.taxAmount - props.discountAmount + roundingAdjustment.value;
 });
+
+/** Rounded Total minus the exact total (0 unless the POS Profile rounds). */
+const roundingAdjustment = computed(() => cartStore.roundingAdjustment || 0);
 
 /**
  * ============================================================================

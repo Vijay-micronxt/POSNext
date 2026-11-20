@@ -84,6 +84,8 @@ export const usePOSCartStore = defineStore("posCart", () => {
 		totalTax,
 		totalDiscount,
 		grandTotal,
+		roundingAdjustment,
+		setWholeRounding,
 		posProfile,
 		posOpeningShift,
 		payments,
@@ -131,6 +133,13 @@ export const usePOSCartStore = defineStore("posCart", () => {
 	watch(
 		() => [settingsStore.roundUpPayable, settingsStore.payableRoundingStep],
 		([enabled, step]) => setPayableRounding({ enabled, step }),
+		{ immediate: true }
+	);
+
+	// POS Profile Rounded Total: the till collects the same rounded figure the server saves.
+	watch(
+		() => settingsStore.disableRoundedTotal,
+		(disabled) => setWholeRounding(!disabled),
 		{ immediate: true }
 	);
 
@@ -1945,6 +1954,7 @@ export const usePOSCartStore = defineStore("posCart", () => {
 		totalTax,
 		totalDiscount,
 		grandTotal,
+		roundingAdjustment,
 		posProfile,
 		posOpeningShift,
 		payments,
