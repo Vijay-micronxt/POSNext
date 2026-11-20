@@ -988,6 +988,17 @@ def update_invoice(data):
 		if invoice_doc.base_grand_total is None:
 			invoice_doc.base_grand_total = 0.0
 
+		# The till collected the exact grand total, not the Rounded Total (a till that does not
+		# round yet, or a bill queued offline before it did). Keep this bill unrounded so it is
+		# saved at what was actually paid, instead of 0.20 short (Overdue) or 0.40 over.
+		if not invoice_doc.disable_rounded_total and not invoice_doc.get("is_return") and invoice_doc.get("payments"):
+			precision = invoice_doc.precision("grand_total")
+			paid = flt(sum(flt(p.amount) for p in invoice_doc.payments), precision)
+			grand = flt(invoice_doc.grand_total, precision)
+			if paid == grand and flt(invoice_doc.rounded_total, precision) != grand:
+				invoice_doc.disable_rounded_total = 1
+				invoice_doc.calculate_taxes_and_totals()
+
 		# Set accounts for payment methods before saving
 		_set_payment_accounts(invoice_doc.payments, invoice_doc.company)
 

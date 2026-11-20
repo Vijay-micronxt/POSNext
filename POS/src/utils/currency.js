@@ -205,6 +205,14 @@ export function roundCurrency(value) {
 	return round(value, settings.currency);
 }
 
+/**
+ * Round to a whole number with the system rounding method, the way ERPNext
+ * computes Rounded Total when the currency has no smallest fraction set.
+ */
+export function roundWhole(value) {
+	return round(value, 0);
+}
+
 /** Round using system float precision */
 export function roundFloat(value) {
 	return round(value, settings.float);

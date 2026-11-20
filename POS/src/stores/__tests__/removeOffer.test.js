@@ -45,13 +45,16 @@ vi.mock("frappe-ui", () => ({
 vi.mock("@/utils/offline", () => ({ isOffline: () => false, getCachedItem: vi.fn() }));
 vi.mock("@/utils/offline/offlineState", () => ({ offlineState: { isOffline: false } }));
 vi.mock("@/stores/serialNumber", () => ({ useSerialNumberStore: () => ({ returnSerials: vi.fn() }) }));
-vi.mock("@/utils/currency", () => ({ roundCurrency: (v) => Math.round((Number(v) || 0) * 100) / 100 }));
+vi.mock("@/utils/currency", () => ({
+	roundCurrency: (v) => Math.round((Number(v) || 0) * 100) / 100,
+	roundWhole: (v) => Math.round(Number(v) || 0),
+}));
 vi.mock("@/composables/useToast", () => ({
 	useToast: () => ({ showSuccess: vi.fn(), showError: vi.fn(), showWarning: vi.fn(), showInfo: vi.fn() }),
 }));
 vi.mock("@/stores/posShift", () => ({ usePOSShiftStore: () => ({ currentProfile: {} }) }));
 vi.mock("@/stores/posSettings", () => ({
-	usePOSSettingsStore: () => reactive({ roundUpPayable: false, payableRoundingStep: 10 }),
+	usePOSSettingsStore: () => reactive({ roundUpPayable: false, payableRoundingStep: 10, disableRoundedTotal: true }),
 }));
 const offers = [
 	{ name: "PROMO5", title: "5% off", auto: true },
