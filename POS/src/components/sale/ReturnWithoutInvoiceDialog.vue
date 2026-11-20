@@ -128,15 +128,20 @@
 							</div>
 							<div class="w-28">
 								<input
-									v-if="canEditRate"
 									v-model.number="row.rate"
 									type="number"
 									min="0"
+									:max="row.price_list_rate || undefined"
 									step="0.01"
 									class="h-8 w-full rounded border border-gray-300 px-2 text-end text-sm"
 									@change="normalizeRate(row)"
 								/>
-								<p v-else class="text-end text-sm text-gray-700">{{ formatCurrency(row.rate) }}</p>
+								<p
+									v-if="row.price_list_rate && row.rate < row.price_list_rate"
+									class="mt-0.5 text-end text-xs text-gray-400 line-through"
+								>
+									{{ formatCurrency(row.price_list_rate) }}
+								</p>
 							</div>
 							<p class="w-28 text-end text-sm font-semibold text-gray-900">
 								{{ formatCurrency(row.qty * row.rate) }}
@@ -297,7 +302,6 @@ let itemTimer = null;
 let itemRequest = 0;
 
 const taxInclusive = computed(() => Boolean(cartStore.taxInclusive));
-const canEditRate = computed(() => settingsStore.allowUserToEditRate);
 const hasOpenShift = computed(() => Boolean(props.posOpeningShift));
 const isEdit = computed(() => Boolean(props.exchange?.items?.length));
 const defaultCustomer = computed(() => shiftStore.profileCustomer);
@@ -548,8 +552,13 @@ function normalizeQty(row) {
 	row.qty = Math.max(1, Number.parseInt(row.qty) || 1);
 }
 
+// No bill means no sold price to go by: the cashier types what the customer paid
+// (e.g. after a discount), whatever the POS Settings say about editing rates on a sale.
+// Never more than the item's selling price.
 function normalizeRate(row) {
-	row.rate = Math.max(0, roundCurrency(Number(row.rate) || 0));
+	let rate = Math.max(0, roundCurrency(Number(row.rate) || 0));
+	if (row.price_list_rate > 0 && rate > row.price_list_rate) rate = row.price_list_rate;
+	row.rate = rate;
 }
 
 function handleSubmit() {
