@@ -2644,10 +2644,15 @@ def prepare_return_invoice(invoice_name, pos_opening_shift=None):
 
 	# make_sales_return already sets each row to what is left after earlier returns; count from the
 	# original rows, or every earlier return is taken off twice ("All items ... returned" too early)
-	original_qty_map = {
-		row.name: abs(flt(row.qty))
-		for row in frappe.get_all("Sales Invoice Item", {"parent": invoice_name}, ["name", "qty"])
+	original_rows = {
+		row.name: row
+		for row in frappe.get_all(
+			"Sales Invoice Item",
+			{"parent": invoice_name},
+			["name", "qty", "rate", "net_amount", "distributed_discount_amount"],
+		)
 	}
+	original_qty_map = {name: abs(flt(row.qty)) for name, row in original_rows.items()}
 
 	# Convert to dict and update items with remaining quantities
 	return_dict = return_doc.as_dict()
@@ -2728,6 +2733,16 @@ def prepare_return_invoice(invoice_name, pos_opening_shift=None):
 		# For exclusive taxes, use net_rate as before.
 		if tax_inclusive:
 			item_rate = flt(item.get("rate"), precision)
+			# rate is before the bill-level discount (Additional Discount on the whole cart).
+			# Take this row's share of it off, or a 5% cart discount is refunded at full price.
+			# distributed_discount_amount is this row's share on the ex-tax amount, so scale the
+			# tax-inclusive rate by the same ratio.
+			original_row = original_rows.get(item.get("sales_invoice_item"))
+			if original_row and flt(original_row.distributed_discount_amount) > 0:
+				net_amount = flt(original_row.net_amount)
+				before_discount = net_amount + flt(original_row.distributed_discount_amount)
+				if before_discount > 0:
+					item_rate = flt(flt(original_row.rate) * net_amount / before_discount, precision)
 			rate_with_tax = item_rate
 			# Both price_list_rate and rate are tax-inclusive, so discount is their difference
 			discount_per_unit = flt(price_list_rate - item_rate, precision)
