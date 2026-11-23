@@ -3,7 +3,10 @@ import { setActivePinia, createPinia } from "pinia";
 vi.mock("frappe-ui", () => ({ createResource: () => ({ submit: vi.fn(), fetch: vi.fn() }), call: vi.fn() }));
 vi.mock("@/utils/offline", () => ({ isOffline: () => false, getCachedItem: vi.fn() }));
 vi.mock("@/stores/serialNumber", () => ({ useSerialNumberStore: () => ({ returnSerials: vi.fn() }) }));
-vi.mock("@/utils/currency", () => ({ roundCurrency: (v) => Math.round((Number(v) || 0) * 100) / 100 }));
+vi.mock("@/utils/currency", () => ({
+	roundCurrency: (v) => Math.round((Number(v) || 0) * 100) / 100,
+	roundWhole: (v) => Math.round(Number(v) || 0),
+}));
 import { useInvoice } from "@/composables/useInvoice";
 
 function cart({ inclusive = true, taxRate = 0, items, addl = 0, on = true, step = 10 }) {
@@ -76,5 +79,34 @@ describe("round up payable", () => {
     // 449.1 + 500 = 949.1 -> 950; gross 999 -> 49
     expect(c.grandTotal.value).toBe(950);
     expect(c.billDiscount.value).toBe(49);
+  });
+});
+
+describe("POS Profile rounded total (nearest rupee)", () => {
+  beforeEach(() => setActivePinia(createPinia()));
+  function rounded(rate, on = true) {
+    const c = cart({ on: false, items: [{ item_code: "A", price_list_rate: rate, rate }] });
+    c.setWholeRounding(on);
+    return c;
+  }
+  it("10.45 -> 10, adjustment -0.45", () => {
+    const c = rounded(10.45);
+    expect(c.grandTotal.value).toBe(10);
+    expect(c.roundingAdjustment.value).toBe(-0.45);
+  });
+  it("10.55 -> 11, adjustment 0.45", () => {
+    const c = rounded(10.55);
+    expect(c.grandTotal.value).toBe(11);
+    expect(c.roundingAdjustment.value).toBe(0.45);
+  });
+  it("64.80 -> 65: the till asks for 65, not 64.80", () => {
+    const c = rounded(64.8);
+    expect(c.grandTotal.value).toBe(65);
+    expect(c.remainingAmount.value).toBe(65);
+  });
+  it("rounding off: exact total", () => {
+    const c = rounded(10.45, false);
+    expect(c.grandTotal.value).toBe(10.45);
+    expect(c.roundingAdjustment.value).toBe(0);
   });
 });

@@ -4,7 +4,7 @@ import { isOffline, getCachedItem } from "@/utils/offline";
 import { useSerialNumberStore } from "@/stores/serialNumber";
 import { CoalescingMutex } from "@/utils/mutex";
 import { logger } from "@/utils/logger";
-import { roundCurrency } from "@/utils/currency";
+import { roundCurrency, roundWhole } from "@/utils/currency";
 
 const log = logger.create("Invoice");
 
@@ -30,6 +30,8 @@ export function useInvoice() {
 	const couponCode = ref(null);
 	// Round Up Payable (POS Settings): see the "ROUND UP PAYABLE" block below.
 	const payableRounding = ref({ enabled: false, step: 10 });
+	// POS Profile Rounded Total (disable_rounded_total off): see grandTotal below.
+	const wholeRounding = ref(false);
 	// The cashier's own Additional Discount while Round Up Payable is on. Never recalculated.
 	const manualBillDiscount = ref(null);
 	const taxRules = ref([]); // Tax rules from POS Profile
@@ -287,10 +289,20 @@ export function useInvoice() {
 	const totalDiscount = computed(() =>
 		roundPayableActive.value ? billDiscount.value : itemTotalDiscount.value
 	);
-	const grandTotal = computed(() =>
+	// Grand total before Rounded Total is applied.
+	const exactGrandTotal = computed(() =>
 		roundPayableActive.value
 			? roundCurrency(fullPriceTotals.value.gross - billDiscount.value)
 			: discountedGrandTotal.value
+	);
+	// POS Profile "Disable Rounded Total" off: the server saves a Rounded Total to the
+	// nearest rupee (10.45 -> 10, 10.55 -> 11). The till must collect that same figure,
+	// or the bill is left 0.20 short (Overdue) or 0.40 over.
+	const grandTotal = computed(() =>
+		wholeRounding.value ? roundWhole(exactGrandTotal.value) : exactGrandTotal.value
+	);
+	const roundingAdjustment = computed(() =>
+		roundCurrency(grandTotal.value - exactGrandTotal.value)
 	);
 	const totalTax = computed(() => {
 		if (!roundPayableActive.value) return itemTotalTax.value;
@@ -299,11 +311,16 @@ export function useInvoice() {
 		// (the discount on the Grand Total takes its share of tax with it).
 		if (!taxInclusive.value || gross <= 0) return tax;
 		// Tax inclusive: the bill-level discount reduces the tax in proportion.
-		return roundCurrency((tax * grandTotal.value) / gross);
+		return roundCurrency((tax * exactGrandTotal.value) / gross);
 	});
 
 	function setPayableRounding({ enabled = false, step = 10 } = {}) {
 		payableRounding.value = { enabled: Boolean(enabled), step: Number(step) || 10 };
+	}
+
+	/** Round the payable to the nearest rupee (POS Profile Rounded Total is on). */
+	function setWholeRounding(enabled) {
+		wholeRounding.value = Boolean(enabled);
 	}
 
 	/** The cashier typed an Additional Discount: keep it as it is. null = back to the rounded figure. */
@@ -1547,6 +1564,8 @@ export function useInvoice() {
 		totalTax,
 		totalDiscount,
 		grandTotal,
+		roundingAdjustment,
+		setWholeRounding,
 		totalPaid,
 		// Round Up Payable
 		payableRounding,
